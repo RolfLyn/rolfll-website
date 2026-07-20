@@ -1,0 +1,21 @@
+---
+const links = [
+  { href: '/', label: 'Home' },
+  { href: '/works', label: 'Works' },
+  { href: '/resume', label: 'Resume' },
+  { href: '/contact', label: 'Contact' },
+];
+const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
+---
+<header class="site-nav">
+  <a class="site-nav__name" href="/">Rolf Lyneborg Lund</a>
+  <nav>
+    <ul>
+      {links.map((link) => (
+        <li>
+          <a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label}</a>
+        </li>
+      ))}
+    </ul>
+  </nav>
+</header>
