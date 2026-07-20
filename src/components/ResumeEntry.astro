@@ -1,0 +1,13 @@
+---
+import type { ResumeItemData } from '../content/schemas';
+
+type Props = Pick<ResumeItemData, 'title' | 'org' | 'dateRange' | 'description'>;
+const { title, org, dateRange, description } = Astro.props;
+---
+<article class="resume-entry reveal">
+  <div class="resume-entry__heading">
+    <h3>{title}{org && <span class="resume-entry__org"> &mdash; {org}</span>}</h3>
+    {dateRange && <p class="resume-entry__date">{dateRange}</p>}
+  </div>
+  <p>{description}</p>
+</article>
