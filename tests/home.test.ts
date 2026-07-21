@@ -18,6 +18,10 @@ describe('home page', () => {
   });
 
   it('shows the professional intro copy', () => {
+    expect(document.body.textContent).toContain(
+      'I build machine learning systems on human data, and study what they actually do.',
+    );
     expect(document.body.textContent).toContain('Lead People Analytics Specialist at Grundfos');
+    expect(document.body.textContent).toContain('The practice keeps the research honest.');
   });
 });
