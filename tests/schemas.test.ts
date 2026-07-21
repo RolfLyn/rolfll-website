@@ -46,4 +46,19 @@ describe('resumeItemSchema', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it('accepts recognition and media types', () => {
+    const recognition = resumeItemSchema.safeParse({
+      type: 'recognition',
+      title: 'Spar Nord Foundation Research Award',
+      description: 'Awarded by the Spar Nord Foundation for research contributions.',
+    });
+    const media = resumeItemSchema.safeParse({
+      type: 'media',
+      title: 'National media commentary on AI',
+      description: 'Recurring expert commentator on AI ethics.',
+    });
+    expect(recognition.success).toBe(true);
+    expect(media.success).toBe(true);
+  });
 });

@@ -11,7 +11,7 @@ export const projectSchema = z.object({
 });
 
 export const resumeItemSchema = z.object({
-  type: z.enum(['education', 'experience', 'competency', 'interest']),
+  type: z.enum(['education', 'experience', 'competency', 'recognition', 'media', 'interest']),
   title: z.string(),
   org: z.string().optional(),
   dateRange: z.string().optional(),
