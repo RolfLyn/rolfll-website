@@ -21,4 +21,8 @@ describe('contact page', () => {
   it('shows the direct email address', () => {
     expect(document.body.textContent).toContain('rolf@rolfll.com');
   });
+
+  it('shows the consult-ask copy', () => {
+    expect(document.body.textContent).toContain('it is cheaper to talk first');
+  });
 });
