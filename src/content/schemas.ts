@@ -2,9 +2,11 @@ import { z } from 'astro/zod';
 
 export const projectSchema = z.object({
   title: z.string(),
+  subtitle: z.string().optional(),
   dateRange: z.string().optional(),
   tags: z.array(z.string()).default([]),
-  description: z.string(),
+  description: z.string().optional(),
+  list: z.array(z.string()).optional(),
   order: z.number().default(0),
 });
 

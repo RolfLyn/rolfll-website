@@ -1,13 +1,19 @@
 ---
 import type { ProjectData } from '../content/schemas';
 
-type Props = Pick<ProjectData, 'title' | 'dateRange' | 'tags' | 'description'>;
-const { title, dateRange, tags, description } = Astro.props;
+type Props = Pick<ProjectData, 'title' | 'subtitle' | 'dateRange' | 'tags' | 'description' | 'list'>;
+const { title, subtitle, dateRange, tags, description, list } = Astro.props;
 ---
 <article class="project-card reveal">
   {dateRange && <p class="project-card__date">{dateRange}</p>}
   <h3>{title}</h3>
-  <p>{description}</p>
+  {subtitle && <p class="project-card__subtitle">{subtitle}</p>}
+  {description && <p>{description}</p>}
+  {list && (
+    <ul class="project-card__list">
+      {list.map((item) => <li>{item}</li>)}
+    </ul>
+  )}
   <ul class="project-card__tags">
     {tags.map((tag) => <li>{tag}</li>)}
   </ul>

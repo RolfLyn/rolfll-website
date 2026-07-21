@@ -9,13 +9,19 @@ const projects = (await getCollection('projects')).sort((a, b) => a.data.order -
 <Layout title="Works" description="Selected work in people analytics, applied machine learning, and social data science.">
   <Eyebrow index="02" label="works" />
   <h1>Selected work</h1>
+  <p>
+    Four systems and a line of research. The through-line: applied machine learning on human
+    data, built to answer a real question and governed so it does not answer the wrong one.
+  </p>
   <div class="project-grid">
     {projects.map((project) => (
       <ProjectCard
         title={project.data.title}
+        subtitle={project.data.subtitle}
         dateRange={project.data.dateRange}
         tags={project.data.tags}
         description={project.data.description}
+        list={project.data.list}
       />
     ))}
   </div>

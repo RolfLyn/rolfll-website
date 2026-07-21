@@ -10,9 +10,18 @@ describe('projectSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('rejects an entry missing the required description', () => {
-    const result = projectSchema.safeParse({ title: 'Test project' });
+  it('rejects an entry missing the required title', () => {
+    const result = projectSchema.safeParse({ description: 'A test project description.' });
     expect(result.success).toBe(false);
+  });
+
+  it('accepts a subtitle and list in place of a description', () => {
+    const result = projectSchema.safeParse({
+      title: 'Research',
+      subtitle: 'the research beneath the practice',
+      list: ['Publication one.', 'Publication two.'],
+    });
+    expect(result.success).toBe(true);
   });
 });
 
