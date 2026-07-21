@@ -1,6 +1,6 @@
 ---
 type: "interest"
-title: "Arduino & robotics"
-description: "Hands-on electronics and robotics projects."
+title: "Arduino and robotics"
+description: "Building physical systems teaches you where models meet reality, and where they break."
 order: 1
 ---

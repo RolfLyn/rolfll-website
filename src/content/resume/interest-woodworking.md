@@ -1,6 +1,6 @@
 ---
 type: "interest"
 title: "Woodworking"
-description: "Building and finishing furniture."
+description: "Finishing furniture is a lesson in tolerances. The gap between good enough and right is measured in millimeters."
 order: 2
 ---

@@ -1,6 +1,6 @@
 ---
 type: "interest"
 title: "Powerlifting"
-description: "Strength training and competition."
+description: "Progress is a data problem. Load, recovery, and patience, measured over months."
 order: 3
 ---
