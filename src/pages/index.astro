@@ -1,26 +1,57 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import Eyebrow from '../components/Eyebrow.astro';
+import { getCollection } from 'astro:content';
 import { LINKEDIN_URL, GITHUB_URL, AAU_PROFILE_URL } from '../data/social';
+
+const projects = (await getCollection('projects')).sort((a, b) => a.data.order - b.data.order);
+const preview = projects.slice(0, 4);
+const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 ---
 <Layout
   title="Home"
   description="Rolf Lyneborg Lund: Lead People Analytics Specialist at Grundfos and Associate Professor in Social Data Science at AAU."
 >
-  <section class="reveal">
-    <Eyebrow index="01" label="about" />
-    <h1>I build machine learning systems on human data, and study what they actually do.</h1>
-    <p>
-      Lead People Analytics Specialist at Grundfos, where I put applied AI into production on
-      real HR problems. Associate Professor in Social Data Science at Aalborg University, where I
-      research the same systems from the outside. The practice keeps the research honest. The
-      research keeps the practice from believing its own hype.
-    </p>
-    <p class="hero__focus">focus: applied-ml, sociology, behavioral-data</p>
+  <section class="hero reveal">
+    <div class="hero__prompt">
+      <span class="hero__prompt-cmd">$ whoami<span class="cur" aria-hidden="true">▊</span></span>
+      <span class="hero__prompt-rule"></span>
+      <span class="hero__prompt-idx">01 / about</span>
+    </div>
+    <h1 class="hero__title">I build machine learning systems on human data, and study what they actually do.</h1>
+    <div class="hero__cols">
+      <p class="hero__lead">
+        Lead People Analytics Specialist at Grundfos, putting applied AI into production on real
+        HR problems. Associate Professor in Social Data Science at Aalborg University, researching
+        the same systems from the outside.
+      </p>
+      <p class="hero__tagline">
+        The practice keeps the research honest. The research keeps the practice from believing its
+        own hype.
+      </p>
+    </div>
+    <div class="hero__tags">
+      <span class="tag tag--accent">applied-ml</span>
+      <span class="tag">sociology</span>
+      <span class="tag">behavioral-data</span>
+    </div>
+    <div class="hero__links">
+      <a href={LINKEDIN_URL} class="lnk" target="_blank" rel="noopener noreferrer">&rarr; LinkedIn</a>
+      <a href={GITHUB_URL} class="lnk" target="_blank" rel="noopener noreferrer">&rarr; GitHub</a>
+      <a href={AAU_PROFILE_URL} class="lnk" target="_blank" rel="noopener noreferrer">&rarr; Academic profile</a>
+    </div>
   </section>
-  <section class="hero-links reveal">
-    <a href={LINKEDIN_URL} target="_blank" rel="noopener noreferrer">LinkedIn</a>
-    <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
-    <a href={AAU_PROFILE_URL} target="_blank" rel="noopener noreferrer">Academic profile</a>
+
+  <section class="works-preview reveal">
+    <div class="works-preview__head">
+      <span>~/works: selected</span>
+      <a href="/works" class="lnk">view all &rarr;</a>
+    </div>
+    {preview.map((project, i) => (
+      <a class="work-row" href="/works">
+        <span class="work-row__num">{String(i + 1).padStart(2, '0')}</span>
+        <span class="work-row__title">{slugify(project.data.title)} <span>: {project.data.subtitle}</span></span>
+        <span class="work-row__cat">{project.data.tags[0]}</span>
+      </a>
+    ))}
   </section>
 </Layout>

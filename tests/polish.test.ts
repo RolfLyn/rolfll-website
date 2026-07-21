@@ -21,4 +21,16 @@ describe('site polish', () => {
       expect(html).toContain('href="/contact"');
     }
   });
+
+  it('never ships an em dash in visible copy (house style rule)', () => {
+    // Resume is excluded: its Experience/Education org separator ("Title —
+    // Org") predates this rule and the build brief says to keep that
+    // section exactly as-is, so it keeps one deliberate em dash.
+    const pages = ['dist/index.html', 'dist/works/index.html', 'dist/contact/index.html'];
+    for (const page of pages) {
+      const html = readFileSync(page, 'utf-8');
+      expect(html).not.toContain('—');
+      expect(html).not.toContain('&mdash;');
+    }
+  });
 });

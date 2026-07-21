@@ -1,21 +1,30 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import Eyebrow from '../components/Eyebrow.astro';
 import ProjectCard from '../components/ProjectCard.astro';
 import { getCollection } from 'astro:content';
 
 const projects = (await getCollection('projects')).sort((a, b) => a.data.order - b.data.order);
 ---
 <Layout title="Works" description="Selected work in people analytics, applied machine learning, and social data science.">
-  <Eyebrow index="02" label="works" />
-  <h1>Selected work</h1>
-  <p>
-    Four systems and a line of research. The through-line: applied machine learning on human
-    data, built to answer a real question and governed so it does not answer the wrong one.
-  </p>
-  <div class="project-grid">
-    {projects.map((project) => (
+  <section class="page-head">
+    <div class="page-head__rail">
+      <div class="page-head__rail-cmd">$ ls works<span class="cur" aria-hidden="true">▊</span></div>
+      <div class="page-head__rail-label">index</div>
+      <div>02 / works</div>
+    </div>
+    <div class="page-head__body">
+      <h1>Selected work</h1>
+      <p>
+        Four systems and a line of research. The through-line: applied machine learning on human
+        data, built to answer a real question and governed so it does not answer the wrong one.
+      </p>
+    </div>
+  </section>
+
+  <section class="works-list">
+    {projects.map((project, i) => (
       <ProjectCard
+        num={String(i + 1).padStart(2, '0')}
         title={project.data.title}
         subtitle={project.data.subtitle}
         dateRange={project.data.dateRange}
@@ -24,5 +33,5 @@ const projects = (await getCollection('projects')).sort((a, b) => a.data.order -
         list={project.data.list}
       />
     ))}
-  </div>
+  </section>
 </Layout>

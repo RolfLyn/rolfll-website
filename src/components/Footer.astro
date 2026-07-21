@@ -3,10 +3,12 @@ import { LINKEDIN_URL, GITHUB_URL, EMAIL } from '../data/social';
 const year = new Date().getFullYear();
 ---
 <footer class="site-footer">
-  <p>&copy; {year} Rolf Lyneborg Lund</p>
-  <ul class="site-footer__links">
-    <li><a href={LINKEDIN_URL} target="_blank" rel="noopener noreferrer">LinkedIn</a></li>
-    <li><a href={GITHUB_URL} target="_blank" rel="noopener noreferrer">GitHub</a></li>
-    <li><a href={`mailto:${EMAIL}`}>{EMAIL}</a></li>
-  </ul>
+  <div class="site-footer__inner">
+    <p>&copy; {year} Rolf Lyneborg Lund</p>
+    <ul class="site-footer__links">
+      <li><a href={LINKEDIN_URL} class="lnk" target="_blank" rel="noopener noreferrer">LinkedIn</a></li>
+      <li><a href={GITHUB_URL} class="lnk" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+      <li><a href={`mailto:${EMAIL}`} class="lnk">{EMAIL}</a></li>
+    </ul>
+  </div>
 </footer>

@@ -1,26 +1,36 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import Eyebrow from '../components/Eyebrow.astro';
 import { EMAIL } from '../data/social';
 
 const FORMSPREE_ID = 'xrenkdol';
 ---
 <Layout title="Contact" description="Get in touch about project-based consults in people analytics and applied AI.">
-  <Eyebrow index="04" label="contact" />
-  <h1>Contact</h1>
-  <p>
-    I take on a small number of project-based consults: AI readiness, scoping, and vendor
-    evaluation for people data and HR. If you are about to spend real money on an AI project, it
-    is cheaper to talk first.
-  </p>
-  <p><a href={`mailto:${EMAIL}`}>{EMAIL}</a></p>
-  <form class="contact-form" action={`https://formspree.io/f/${FORMSPREE_ID}`} method="POST">
-    <label for="name">Name</label>
-    <input type="text" id="name" name="name" required />
-    <label for="email">Email</label>
-    <input type="email" id="email" name="email" required />
-    <label for="message">Message</label>
-    <textarea id="message" name="message" rows="6" required></textarea>
-    <button type="submit">Send</button>
-  </form>
+  <section class="page-head">
+    <div class="page-head__rail">
+      <div class="page-head__rail-cmd">$ mail<span class="cur" aria-hidden="true">▊</span></div>
+      <div class="page-head__rail-label">index</div>
+      <div>04 / contact</div>
+    </div>
+    <div class="page-head__body">
+      <h1>Let's talk before you spend.</h1>
+      <p>
+        I take on a small number of project-based consults: AI readiness, scoping, and vendor
+        evaluation for people data and HR. If you are about to spend real money on an AI project,
+        it is cheaper to talk first.
+      </p>
+      <a href={`mailto:${EMAIL}`} class="contact-email lnk">{EMAIL}</a>
+      <form class="contact-form" action={`https://formspree.io/f/${FORMSPREE_ID}`} method="POST">
+        <label for="name">Name
+          <input type="text" id="name" name="name" required />
+        </label>
+        <label for="email">Email
+          <input type="email" id="email" name="email" required />
+        </label>
+        <label for="message">Message
+          <textarea id="message" name="message" rows="6" required></textarea>
+        </label>
+        <button type="submit">Send &rarr;</button>
+      </form>
+    </div>
+  </section>
 </Layout>

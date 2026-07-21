@@ -8,14 +8,16 @@ const links = [
 const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 ---
 <header class="site-nav">
-  <a class="site-nav__name" href="/">Rolf Lyneborg Lund</a>
-  <nav>
-    <ul>
-      {links.map((link) => (
-        <li>
-          <a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label}</a>
-        </li>
-      ))}
-    </ul>
-  </nav>
+  <div class="site-nav__inner">
+    <a class="site-nav__name" href="/">rolfll<span>.com</span></a>
+    <nav>
+      <ul>
+        {links.map((link) => (
+          <li>
+            <a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label}</a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  </div>
 </header>

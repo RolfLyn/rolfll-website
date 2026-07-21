@@ -1,6 +1,5 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import Eyebrow from '../components/Eyebrow.astro';
 import ResumeEntry from '../components/ResumeEntry.astro';
 import { getCollection } from 'astro:content';
 
@@ -16,19 +15,36 @@ const sections = [
 ];
 ---
 <Layout title="Resume" description="Professional experience, education, and competencies.">
-  <Eyebrow index="03" label="resume" />
-  <h1>Resume</h1>
-  {sections.map(({ type, heading }) => (
-    <section class="resume-section">
-      <h2>{heading}</h2>
-      {byType(type).map((entry) => (
-        <ResumeEntry
-          title={entry.data.title}
-          org={entry.data.org}
-          dateRange={entry.data.dateRange}
-          description={entry.data.description}
-        />
-      ))}
-    </section>
-  ))}
+  <section class="page-head">
+    <div class="page-head__rail">
+      <div class="page-head__rail-cmd">$ cat cv<span class="cur" aria-hidden="true">▊</span></div>
+      <div class="page-head__rail-label">index</div>
+      <div>03 / resume</div>
+    </div>
+    <div class="page-head__body">
+      <h1>Resume</h1>
+      <p>
+        Fifteen years turning human behavior into computational questions, across industry
+        and academia.
+      </p>
+    </div>
+  </section>
+
+  <section class="resume-list">
+    {sections.map(({ type, heading }) => (
+      <div class="resume-section reveal">
+        <div class="resume-section__head">{heading}</div>
+        <div class="resume-section__body">
+          {byType(type).map((entry) => (
+            <ResumeEntry
+              title={entry.data.title}
+              org={entry.data.org}
+              dateRange={entry.data.dateRange}
+              description={entry.data.description}
+            />
+          ))}
+        </div>
+      </div>
+    ))}
+  </section>
 </Layout>
