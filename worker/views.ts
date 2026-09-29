@@ -25,7 +25,7 @@ body { margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink)
 main { max-width: 36rem; margin: 0 auto; padding: 16vh 1.25rem 4rem; }
 .date { color: var(--muted); font-style: italic; font-size: 1.05rem; margin: 0 0 1rem; }
 .message { font-size: clamp(1.6rem, 5vw, 2.2rem); line-height: 1.35; white-space: pre-line; margin: 0; animation: rise 1.8s ease-out both; }
-.heart { color: var(--accent); text-align: center; margin: 3.5rem 0 2.5rem; }
+.heart { color: var(--accent); font-size: 1.4rem; text-align: center; margin: 3.5rem 0 2.5rem; }
 .archive h2 { font-weight: 500; font-style: italic; font-size: 1.1rem; color: var(--muted); margin: 0 0 1.5rem; }
 .archive article { border-top: 1px solid var(--line); padding: 1.25rem 0; }
 .archive .date { font-size: 0.95rem; margin-bottom: 0.4rem; }
@@ -53,7 +53,7 @@ button { background: #222; color: #fff; border-color: #222; cursor: pointer; }
 ul { list-style: none; padding: 0; }
 li { border-top: 1px solid #e5e5e5; padding: 0.75rem 0; }
 .meta { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; font-size: 0.9rem; color: #666; }
-.tag { font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 999px; background: #eee; margin-left: 0.4rem; }
+.tag { white-space: nowrap; font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 999px; background: #eee; margin-left: 0.4rem; }
 .text { white-space: pre-line; margin: 0.35rem 0 0; }
 .actions { display: flex; gap: 0.75rem; align-items: center; }
 .actions form { display: inline; margin: 0; }

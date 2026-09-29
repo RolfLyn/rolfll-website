@@ -39,3 +39,13 @@ Deployed via Cloudflare Workers (static assets), configured in `wrangler.jsonc` 
 - [x] Test the site on the Cloudflare preview URL.
 - [ ] Repoint rolfll.com's DNS to Cloudflare (nameservers/records only — no registrar transfer needed).
 - [ ] Once the new site is confirmed live on the real domain, cancel the old WordPress hosting plan.
+
+## Private notes
+
+A hidden, password-protected page served by the Worker script in `worker/`. Nothing about it (path, passwords, messages) is stored in this repo.
+
+- Messages live in the `NOTES` KV namespace, as one JSON list under the key `notes`.
+- Configuration is Cloudflare secrets: `NOTES_PATH` (e.g. `/for-you`), `READER_PASSWORD`, `ADMIN_PASSWORD`, `COOKIE_SECRET`. Set or change one with `npx wrangler secret put <NAME>`.
+- Daily use: open `<NOTES_PATH>/admin`, write a note, pick a date, save. The reader sees the latest note dated today or earlier (Copenhagen time), plus the earlier ones below it.
+- Changing `COOKIE_SECRET` logs everyone out. Changing `NOTES_PATH` moves the page.
+- Local dev: put test values for the four secrets in `.dev.vars` (gitignored), then `npx astro build && npx wrangler dev`.
