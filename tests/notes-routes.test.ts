@@ -130,6 +130,13 @@ describe('reader', () => {
     expect(await res.text()).toContain('type="password"');
   });
 
+  it('answers HEAD requests like GET', async () => {
+    const { env } = setup();
+    const res = await handleRequest(new Request('https://rolfll.com/for-you', { method: 'HEAD' }), env, NOW);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('X-Robots-Tag')).toBe('noindex, nofollow');
+  });
+
   it('returns a noindex 404 for unknown sub-paths', async () => {
     const { env } = setup();
     const res = await handleRequest(get('/for-you/nope'), env, NOW);

@@ -163,7 +163,8 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
   };
   const kv = env.NOTES;
   try {
-    switch (`${request.method} ${path.slice(base.length)}`) {
+    const method = request.method === 'HEAD' ? 'GET' : request.method;
+    switch (`${method} ${path.slice(base.length)}`) {
       case 'GET ': return await showReader(request, kv, cfg, now);
       case 'POST /login': return await handleLogin(request, kv, cfg, now, 'reader');
       case 'GET /admin': return await showAdmin(request, kv, cfg, now, url);
