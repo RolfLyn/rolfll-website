@@ -74,6 +74,18 @@ export function sessionCookie(name: string, value: string, path: string): string
   return `${name}=${value}; Path=${path}; Max-Age=${SESSION_DAYS * 86_400}; HttpOnly; Secure; SameSite=Lax`;
 }
 
+// IPv6 users typically control a whole /64, so count failures per /64 rather than per address.
+export function clientKey(ip: string): string {
+  if (!ip.includes(':')) return ip;
+  const [head, tail = ''] = ip.split('::');
+  const headGroups = head ? head.split(':') : [];
+  const tailGroups = tail ? tail.split(':') : [];
+  const groups = ip.includes('::')
+    ? [...headGroups, ...Array(8 - headGroups.length - tailGroups.length).fill('0'), ...tailGroups]
+    : headGroups;
+  return `${groups.slice(0, 4).map((g) => g.toLowerCase().replace(/^0+(?=.)/, '')).join(':')}::/64`;
+}
+
 async function failureCount(kv: KV, ip: string): Promise<number> {
   return Number((await kv.get(`fail:${ip}`)) ?? 0);
 }

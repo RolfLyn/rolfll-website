@@ -135,8 +135,11 @@ export interface AdminPageData {
   current: Note | null;
   notes: Note[];
   form: Note;
+  /** Date of the note being edited, so a changed date moves it instead of copying it. */
+  original?: string;
   csrf: string;
   flash?: string;
+  error?: string;
 }
 
 export function adminPage(d: AdminPageData): string {
@@ -158,11 +161,13 @@ export function adminPage(d: AdminPageData): string {
   return adminShell(`
 <h1>Notes</h1>
 ${d.flash ? `<p class="flash">${escapeHtml(d.flash)}</p>` : ''}
+${errorLine(d.error)}
 <h2>Showing today (${formatDate(d.today)})</h2>
 <div class="box">${d.current ? escapeHtml(d.current.text) : 'Nothing yet.'}</div>
 <h2>Write a note</h2>
 <form class="write" method="post" action="${escapeHtml(`${d.base}/admin/save`)}">
   ${csrf}
+  ${d.original ? `<input type="hidden" name="original" value="${escapeHtml(d.original)}">` : ''}
   <input type="date" name="date" value="${escapeHtml(d.form.date)}" required>
   <textarea name="text" maxlength="5000" required placeholder="Today's note">${escapeHtml(d.form.text)}</textarea>
   <button type="submit">Save</button>

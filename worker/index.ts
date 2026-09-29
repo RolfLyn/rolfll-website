@@ -2,7 +2,7 @@ import { todayInCopenhagen, isValidDate, nextEmptyDate } from './dates';
 import { parseNotes, selectForReader, upsertNote, removeNote, type Note } from './notes';
 import {
   createSession, verifySession, passwordMatches, csrfToken, verifyCsrf,
-  readCookie, sessionCookie, isLockedOut, recordFailure, type Role,
+  readCookie, sessionCookie, isLockedOut, recordFailure, clientKey, type Role,
 } from './auth';
 import { readerLoginPage, readerPage, errorPage, adminLoginPage, adminPage } from './views';
 import type { Env, KV } from './types';
@@ -70,7 +70,7 @@ async function handleLogin(request: Request, kv: KV, cfg: Config, now: Date, rol
     role === 'reader'
       ? readerLoginPage({ action: `${cfg.base}/login`, error })
       : adminLoginPage({ action: `${cfg.base}/admin/login`, error });
-  const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+  const ip = clientKey(request.headers.get('CF-Connecting-IP') ?? 'unknown');
   if (await isLockedOut(kv, ip)) {
     return html(render('Too many tries. Please wait a few minutes and try again.'), 429);
   }
@@ -93,8 +93,15 @@ async function showReader(request: Request, kv: KV, cfg: Config, now: Date): Pro
   return html(readerPage(selectForReader(await loadNotes(kv), todayInCopenhagen(now))));
 }
 
+interface AdminView {
+  form: Note;
+  original?: string;
+  flash?: string;
+  error?: string;
+}
+
 async function renderAdmin(
-  notes: Note[], cfg: Config, now: Date, session: string, form: Note, flash?: string, status = 200,
+  notes: Note[], cfg: Config, now: Date, session: string, view: AdminView, status = 200,
 ): Promise<Response> {
   const today = todayInCopenhagen(now);
   return html(adminPage({
@@ -102,9 +109,8 @@ async function renderAdmin(
     today,
     current: selectForReader(notes, today).current,
     notes,
-    form,
+    ...view,
     csrf: await csrfToken(session, cfg.secret),
-    flash,
   }), status);
 }
 
@@ -120,7 +126,8 @@ async function showAdmin(request: Request, kv: KV, cfg: Config, now: Date, url: 
   const editing = notes.find((n) => n.date === url.searchParams.get('edit'));
   const form = editing ?? { date: nextEmptyDate(notes.map((n) => n.date), todayInCopenhagen(now)), text: '' };
   const msg = url.searchParams.get('msg') ?? '';
-  return renderAdmin(notes, cfg, now, session, form, Object.hasOwn(FLASH, msg) ? FLASH[msg] : undefined);
+  const flash = Object.hasOwn(FLASH, msg) ? FLASH[msg] : undefined;
+  return renderAdmin(notes, cfg, now, session, { form, original: editing?.date, flash });
 }
 
 async function adminAction(
@@ -139,11 +146,13 @@ async function adminAction(
     await storeNotes(kv, removeNote(notes, date));
     return redirect(`${adminHome}?msg=deleted`);
   }
+  const original = field(form, 'original');
   const text = field(form, 'text').replace(/\r\n?/g, '\n').trim();
   if (!isValidDate(date) || text === '' || text.length > MAX_LENGTH) {
-    return renderAdmin(notes, cfg, now, session, { date, text }, INVALID, 400);
+    return renderAdmin(notes, cfg, now, session, { form: { date, text }, original: original || undefined, error: INVALID }, 400);
   }
-  await storeNotes(kv, upsertNote(notes, { date, text }));
+  const kept = original && original !== date ? removeNote(notes, original) : notes;
+  await storeNotes(kv, upsertNote(kept, { date, text }));
   return redirect(`${adminHome}?msg=saved`);
 }
 

@@ -1435,7 +1435,7 @@ Expected: output includes an `id`. Put that id in `wrangler.jsonc` in place of `
 
 - [ ] **Step 3: Set the four secrets on the deployed Worker**
 
-Rolf chooses the path and both passwords, then runs:
+Rolf chooses the path and both passwords. The path must be lowercase ASCII (letters, digits, hyphens), start with `/`, and not clash with an existing page. None of the values may reuse the local-dev values from Task 6, which are public in this plan. Then runs:
 ```
 ! npx wrangler secret put NOTES_PATH
 ! npx wrangler secret put READER_PASSWORD
@@ -1446,6 +1446,10 @@ Then (random key, never displayed):
 node -e "process.stdout.write(require('crypto').randomBytes(32).toString('base64url'))" | npx wrangler secret put COOKIE_SECRET
 ```
 Verify: `npx wrangler secret list` shows all four names.
+
+- [ ] **Step 3b: Add a rate-limiting rule (Cloudflare dashboard)**
+
+The in-Worker lockout is best-effort (KV is eventually consistent). In the Cloudflare dashboard for rolfll.com: Security → WAF → Rate limiting rules → create one rule: when request method is `POST` and URI path ends with `/login`, with the same IP, more than 5 requests per 1 minute → Block for 10 minutes (use the longest period/duration the plan allows). The rule lives in the dashboard, so the secret path is never written into the repo.
 
 - [ ] **Step 4: Verify, commit, push (this deploys)**
 

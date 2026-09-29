@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   passwordMatches, createSession, verifySession, csrfToken, verifyCsrf,
-  readCookie, sessionCookie, isLockedOut, recordFailure,
+  readCookie, sessionCookie, isLockedOut, recordFailure, clientKey,
 } from '../worker/auth';
 import { memoryKV } from './notes-helpers';
 
@@ -71,6 +71,15 @@ describe('cookies', () => {
     expect(c).toContain('HttpOnly');
     expect(c).toContain('Secure');
     expect(c).toContain('SameSite=Lax');
+  });
+});
+
+describe('clientKey', () => {
+  it('keeps IPv4 as is and groups IPv6 by /64', () => {
+    expect(clientKey('1.2.3.4')).toBe('1.2.3.4');
+    expect(clientKey('2001:db8:1:2::1')).toBe(clientKey('2001:0DB8:0001:0002:ffff:0:0:9'));
+    expect(clientKey('2001:db8:1:2::1')).not.toBe(clientKey('2001:db8:1:3::1'));
+    expect(clientKey('::1')).toBe('0:0:0:0::/64');
   });
 });
 

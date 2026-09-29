@@ -105,6 +105,16 @@ describe('reader', () => {
     expect(res.headers.get('Set-Cookie')).toBeNull();
   });
 
+  it('counts failures per IPv6 /64, so rotating addresses in one network does not help', async () => {
+    const { env } = setup();
+    const from = (ip: string, password: string) => new Request('https://rolfll.com/for-you/login', {
+      method: 'POST', body: new URLSearchParams({ password }), headers: { 'CF-Connecting-IP': ip },
+    });
+    for (let i = 1; i <= 5; i++) await handleRequest(from(`2001:db8:1:2::${i}`, 'x'), env, NOW);
+    expect((await handleRequest(from('2001:db8:1:2:ffff::9', 'reader-pw'), env, NOW)).status).toBe(429);
+    expect((await handleRequest(from('2001:db8:1:3::1', 'reader-pw'), env, NOW)).status).toBe(303);
+  });
+
   it("shows today's note and the archive, never future notes, with or without trailing slash", async () => {
     const { env, kv } = setup();
     seed(kv, [
@@ -217,6 +227,28 @@ describe('admin', () => {
     const res = await handleRequest(post('/for-you/admin/save', { csrf, date: 'bad', text: 'kept text' }, cookie), env, NOW);
     expect(await res.text()).toContain('>kept text</textarea>');
     expect(kv.data.has('notes')).toBe(false);
+  });
+
+  it('moves a note when its date is changed while editing', async () => {
+    const { env, kv } = setup();
+    seed(kv, [{ date: '2026-10-02', text: 'tomorrow' }]);
+    const cookie = await login(env, 'admin');
+    const edit = await (await handleRequest(get('/for-you/admin?edit=2026-10-02', cookie), env, NOW)).text();
+    expect(edit).toContain('name="original" value="2026-10-02"');
+    const csrf = await adminCsrf(env, cookie);
+    await handleRequest(
+      post('/for-you/admin/save', { csrf, original: '2026-10-02', date: '2026-10-05', text: 'tomorrow' }, cookie), env, NOW,
+    );
+    expect(JSON.parse(kv.data.get('notes')!)).toEqual([{ date: '2026-10-05', text: 'tomorrow' }]);
+  });
+
+  it('shows validation errors as errors, not as success messages', async () => {
+    const { env } = setup();
+    const cookie = await login(env, 'admin');
+    const csrf = await adminCsrf(env, cookie);
+    const html = await (await handleRequest(post('/for-you/admin/save', { csrf, date: 'bad', text: 'x' }, cookie), env, NOW)).text();
+    expect(html).toContain('<p class="error">Needs a real date');
+    expect(html).not.toContain('class="flash"');
   });
 
   it('deletes a note', async () => {
