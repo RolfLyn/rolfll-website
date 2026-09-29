@@ -20,7 +20,7 @@ The repo is public, so nothing personal lives in it: no messages, no passwords, 
 
 - The existing Cloudflare Worker (static assets from `./dist`) gains a Worker script (`main` in `wrangler.jsonc`).
 - The script handles requests under the secret path. Everything else is passed to the static assets binding unchanged, so the main site's behavior does not change.
-- Messages are stored in a Cloudflare KV namespace. Key = `YYYY-MM-DD`, value = message text. One message per date (saving a date again overwrites it).
+- Messages are stored in a Cloudflare KV namespace as a single JSON array under the key `notes` (`[{date: "YYYY-MM-DD", text}]`), so one KV read serves a whole page. There is only one writer (the admin), so write races are not a concern. One message per date (saving a date again overwrites it). If the stored value is unreadable, pages show an error and nothing is written, so a corrupt value is never silently replaced with an empty list.
 - Pages are rendered as HTML strings by the Worker (no Astro involvement), so no secret content or path ever ends up in `dist/` or in the repo.
 
 ### Configuration (all set as Cloudflare secrets, never committed)
@@ -46,13 +46,13 @@ If `NOTES_PATH` is unset, the script serves nothing extra (fail closed).
 
 - `GET <path>` → not logged in: login form. Logged in: current message + archive.
 - `POST <path>/login` → correct password: set the reader cookie and redirect. Wrong: form again with a kind error.
-- `GET <path>/admin` → not logged in as admin: admin login form. Logged in: form (date defaults to the next empty day) + list of all messages, with "currently showing" marked at top.
+- `GET <path>/admin` → not logged in as admin: admin login form. Logged in: form (date defaults to the first date from today onward with no message) + list of all messages, with "currently showing" marked at top.
 - `POST <path>/admin/save|delete` → admin cookie required. Redirect back after the action (POST-redirect-GET).
 - Admin forms include a CSRF token tied to the admin cookie.
 
 ### Rate limiting
 
-Failed logins are counted per IP in KV with a short TTL. After 5 failures in 15 minutes, further attempts from that IP are refused until the window expires.
+Failed logins are counted per IP in KV (key `fail:<ip>`) with a 15-minute TTL that restarts on each failure. After 5 failures, further attempts from that IP are refused until 15 minutes have passed since the last failure.
 
 ## Visual Design
 
