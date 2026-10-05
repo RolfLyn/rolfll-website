@@ -1,6 +1,6 @@
 import { todayInCopenhagen, isValidDate, nextEmptyDate } from './dates';
 import {
-  parseNotes, selectForReader, upsertNote, removeNote, attachmentKeys, findByMediaKey,
+  parseNotes, selectForReader, upsertNote, removeNote, attachmentKeys, findByMediaKey, MEDIA_KEY,
   type Note, type Attachment,
 } from './notes';
 import {
@@ -12,6 +12,8 @@ import { readerLoginPage, readerPage, errorPage, adminLoginPage, adminPage } fro
 import type { Env, KV, R2 } from './types';
 
 const NOTES_KEY = 'notes';
+const TRASH_KEY = 'trash';
+const TRASH_GRACE_MS = 86_400_000;
 const MAX_LENGTH = 5000;
 const COOKIE: Record<Role, string> = { reader: 'notes_reader', admin: 'notes_admin' };
 const FLASH: Record<string, string> = { saved: 'Saved.', deleted: 'Deleted.' };
@@ -88,15 +90,40 @@ async function storeUpload(
   return { key, type };
 }
 
-// Deletes files no longer referenced by any note. Best-effort: the notes are already saved.
-async function deleteOrphans(bucket: R2, before: Note[], after: Note[]): Promise<void> {
-  const keep = new Set(after.flatMap(attachmentKeys));
-  const orphans = before.flatMap(attachmentKeys).filter((key) => !keep.has(key));
-  if (orphans.length === 0) return;
+interface TrashEntry {
+  key: string;
+  at: number;
+}
+
+function parseTrash(raw: string | null): TrashEntry[] {
   try {
-    await bucket.delete(orphans);
+    const data: unknown = JSON.parse(raw ?? '[]');
+    if (!Array.isArray(data)) return [];
+    return data.filter((e): e is TrashEntry =>
+      typeof e === 'object' && e !== null && typeof e.key === 'string' && MEDIA_KEY.test(e.key) && typeof e.at === 'number');
+  } catch {
+    return [];
+  }
+}
+
+// Files no longer referenced by any note go to a trash list and are deleted a day later.
+// The delay protects against a stale KV read putting a reference back; such files are rescued.
+// Best-effort: the notes are already saved when this runs.
+async function retireOrphans(env: Env, before: Note[], after: Note[], now: Date): Promise<void> {
+  try {
+    const keep = new Set(after.flatMap(attachmentKeys));
+    let trash = parseTrash(await env.NOTES.get(TRASH_KEY)).filter((e) => !keep.has(e.key));
+    for (const key of before.flatMap(attachmentKeys)) {
+      if (!keep.has(key) && !trash.some((e) => e.key === key)) trash.push({ key, at: now.getTime() });
+    }
+    const due = trash.filter((e) => now.getTime() - e.at >= TRASH_GRACE_MS);
+    if (due.length > 0) {
+      await env.MEDIA.delete(due.map((e) => e.key));
+      trash = trash.filter((e) => !due.includes(e));
+    }
+    await env.NOTES.put(TRASH_KEY, JSON.stringify(trash));
   } catch (error) {
-    console.error('Could not delete media', error);
+    console.error('Could not clean up media', error);
   }
 }
 
@@ -194,13 +221,14 @@ async function adminAction(
   if (action === 'delete') {
     const next = removeNote(notes, date);
     await storeNotes(env.NOTES, next);
-    await deleteOrphans(env.MEDIA, notes, next);
+    await retireOrphans(env, notes, next, now);
     return redirect(`${adminHome}?msg=deleted`);
   }
 
   const original = field(form, 'original');
   const text = field(form, 'text').replace(/\r\n?/g, '\n').trim();
-  const existing = notes.find((n) => n.date === (original || date));
+  // Only an edited note keeps its media; a fresh form never inherits files it did not show.
+  const existing = original ? notes.find((n) => n.date === original) : undefined;
   const photoFile = uploadedFile(form, 'photo');
   const audioFile = uploadedFile(form, 'audio');
   const photoCheck = photoFile ? checkFile('photo', photoFile) : null;
@@ -231,7 +259,7 @@ async function adminAction(
   const kept = original && original !== date ? removeNote(notes, original) : notes;
   const next = upsertNote(kept, note);
   await storeNotes(env.NOTES, next);
-  await deleteOrphans(env.MEDIA, notes, next);
+  await retireOrphans(env, notes, next, now);
   return redirect(`${adminHome}?msg=saved`);
 }
 

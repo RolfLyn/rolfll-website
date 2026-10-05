@@ -43,13 +43,15 @@ const postForm = (path: string, fields: Record<string, string | File>, cookie?: 
   return new Request(`https://rolfll.com${path}`, { method: 'POST', body, headers: cookie ? { Cookie: cookie, ...IP } : IP });
 };
 const file = (name: string, type: string, size = 10) => new File([new Uint8Array(size).fill(7)], name, { type });
+const LATER = new Date(NOW.getTime() + 25 * 3600 * 1000);
 const stored = (kv: ReturnType<typeof memoryKV>) => JSON.parse(kv.data.get('notes')!);
 
 async function adminWith(env: Env) {
   const cookie = await login(env, 'admin');
   const csrf = await adminCsrf(env, cookie);
-  const save = (fields: Record<string, string | File>) => handleRequest(postForm('/for-you/admin/save', { csrf, ...fields }, cookie), env, NOW);
-  return { cookie, csrf, save };
+  const saveAt = (when: Date, fields: Record<string, string | File>) => handleRequest(postForm('/for-you/admin/save', { csrf, ...fields }, cookie), env, when);
+  const save = (fields: Record<string, string | File>) => saveAt(NOW, fields);
+  return { cookie, csrf, save, saveAt };
 }
 
 const seed = (kv: ReturnType<typeof memoryKV>, notes: { date: string; text: string }[]) =>
@@ -327,9 +329,9 @@ describe('media', () => {
     expect(media.objects.size).toBe(2);
   });
 
-  it('replaces and removes attachments, deleting the old files', async () => {
+  it('replaces and removes attachments, deleting the old files after a day', async () => {
     const { env, kv, media } = setup();
-    const { save } = await adminWith(env);
+    const { save, saveAt } = await adminWith(env);
     await save({ date: '2026-10-01', text: 'hi', photo: file('p.jpg', 'image/jpeg'), audio: file('a.mp3', 'audio/mpeg') });
     const before = stored(kv)[0];
     await save({ original: '2026-10-01', date: '2026-10-01', text: 'hi', photo: file('new.png', 'image/png'), remove_audio: '1' });
@@ -337,6 +339,10 @@ describe('media', () => {
     expect(after.photo.key).not.toBe(before.photo.key);
     expect(after.photo.type).toBe('image/png');
     expect(after.audio).toBeUndefined();
+    expect(media.objects.has(before.photo.key)).toBe(true);
+    const reader = await login(env, 'reader');
+    expect((await handleRequest(get(`/for-you/media/${before.photo.key}`, reader), env, NOW)).status).toBe(404);
+    await saveAt(LATER, { date: '2026-10-09', text: 'later' });
     expect([...media.objects.keys()]).toEqual([after.photo.key]);
   });
 
@@ -350,23 +356,26 @@ describe('media', () => {
     expect(media.objects.has(key)).toBe(true);
   });
 
-  it('moving onto a date that has a note replaces it and deletes its files', async () => {
+  it('moving onto a date that has a note replaces it and deletes its files after a day', async () => {
     const { env, kv, media } = setup();
-    const { save } = await adminWith(env);
+    const { save, saveAt } = await adminWith(env);
     await save({ date: '2026-10-02', text: 'a', photo: file('p.jpg', 'image/jpeg') });
     await save({ date: '2026-10-05', text: 'b', audio: file('a.mp3', 'audio/mpeg') });
     const photoKey = stored(kv).find((n: { date: string }) => n.date === '2026-10-02').photo.key;
     await save({ original: '2026-10-02', date: '2026-10-05', text: 'a' });
     expect(stored(kv)).toEqual([{ date: '2026-10-05', text: 'a', photo: { key: photoKey, type: 'image/jpeg' } }]);
+    await saveAt(LATER, { original: '2026-10-05', date: '2026-10-05', text: 'a' });
     expect([...media.objects.keys()]).toEqual([photoKey]);
   });
 
-  it('deleting a note deletes its files', async () => {
+  it('deleting a note deletes its files after a day', async () => {
     const { env, kv, media } = setup();
-    const { save, cookie, csrf } = await adminWith(env);
+    const { save, saveAt, cookie, csrf } = await adminWith(env);
     await save({ date: '2026-10-01', text: 'hi', photo: file('p.jpg', 'image/jpeg'), audio: file('a.mp3', 'audio/mpeg') });
     await handleRequest(post('/for-you/admin/delete', { csrf, date: '2026-10-01' }, cookie), env, NOW);
     expect(stored(kv)).toEqual([]);
+    expect(media.objects.size).toBe(2);
+    await saveAt(LATER, { date: '2026-10-09', text: 'later' });
     expect(media.objects.size).toBe(0);
   });
 
@@ -421,5 +430,33 @@ describe('media', () => {
     const notes = stored(kv);
     expect(notes.slice(1)).toEqual(legacy);
     expect(JSON.stringify(notes.slice(1))).toBe(JSON.stringify(legacy));
+  });
+
+  it('a new note on a date that already has one does not inherit its media', async () => {
+    const { env, kv } = setup();
+    const { save } = await adminWith(env);
+    await save({ date: '2026-10-08', text: 'old', photo: file('p.jpg', 'image/jpeg'), audio: file('a.mp3', 'audio/mpeg') });
+    await save({ date: '2026-10-08', text: 'new' });
+    expect(stored(kv)).toEqual([{ date: '2026-10-08', text: 'new' }]);
+  });
+
+  it('a file that is referenced again before the day is up is not deleted', async () => {
+    const { env, kv, media } = setup();
+    const { save, saveAt } = await adminWith(env);
+    await save({ date: '2026-10-01', text: 'hi', photo: file('p.jpg', 'image/jpeg') });
+    const note = stored(kv)[0];
+    await save({ original: '2026-10-01', date: '2026-10-01', text: 'hi', remove_photo: '1' });
+    // A stale write (e.g. from an old read) puts the reference back.
+    kv.data.set('notes', JSON.stringify([note]));
+    await saveAt(LATER, { date: '2026-10-09', text: 'later' });
+    expect(media.objects.has(note.photo.key)).toBe(true);
+  });
+
+  it('a save still succeeds when the cleanup list is unreadable', async () => {
+    const { env, kv } = setup();
+    kv.data.set('trash', 'garbage');
+    const { save } = await adminWith(env);
+    expect((await save({ date: '2026-10-01', text: 'hi' })).status).toBe(303);
+    expect(stored(kv)).toEqual([{ date: '2026-10-01', text: 'hi' }]);
   });
 });

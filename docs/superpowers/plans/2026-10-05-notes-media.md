@@ -1354,4 +1354,4 @@ Wait for a new entry in `npx wrangler deployments list` newer than the push.
 
 - [ ] **Step 5: If anything is wrong**
 
-Rolf runs `npx wrangler rollback` in his own PowerShell (it prompts). The notes in KV are unaffected; the previous code ignores the new optional fields.
+Rolf runs `npx wrangler rollback` in his own PowerShell (it prompts). Reading still works, but the previous code drops `photo`/`audio` when it saves: after a rollback, back up KV and do not save or delete notes until the media version is redeployed.

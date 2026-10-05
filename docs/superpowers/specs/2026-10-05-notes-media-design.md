@@ -7,7 +7,7 @@ The private notes page (spec `2026-09-29-private-notes-design.md`) is live and h
 ## Requirements
 
 - A note may have an optional **photo** and an optional **sound** clip (zero or one of each).
-- **Admin**: the write/edit form gains a Photo and a Sound file field. When editing, each existing attachment can be kept (default), replaced (pick a new file), or removed (checkbox). Deleting a note deletes its files.
+- **Admin**: the write/edit form gains a Photo and a Sound file field. When editing, each existing attachment can be kept (default), replaced (pick a new file), or removed (checkbox). Deleting a note deletes its files (after a one-day grace period, see Flows).
 - **Photos** are resized in the admin's browser before upload: longest edge at most 1600 px, re-encoded as JPEG (quality 0.85), which also strips EXIF metadata such as location. GIFs are uploaded unchanged (to keep animation). If the browser cannot decode the image (e.g. HEIC on Windows Chrome), the original file is sent and the server's type check decides.
 - **Sound** files are uploaded as-is.
 - **Reader page**: photo above the message text, audio player below it. Archive entries show their photo (smaller, lazy-loaded) and audio player too.
@@ -31,8 +31,9 @@ If a file arrives with an empty or generic type, it is inferred from the extensi
 
 ## Flows
 
-- **Save** (`POST <path>/admin/save`, now `multipart/form-data`): validate the date, text, and files first. Then upload new files to R2. Then write the notes list to KV. Then delete replaced or removed files from R2. A failure before the KV write leaves the notes untouched; at worst an unused file is orphaned in R2 (harmless).
-- **Delete** (`POST <path>/admin/delete`): write the notes list to KV first, then delete the note's files from R2.
+- **Save** (`POST <path>/admin/save`, now `multipart/form-data`): validate the date, text, and files first. Then upload new files to R2. Then write the notes list to KV. Then move replaced or removed files to a `trash` list in KV; they are deleted from R2 on a later save once they are a day old, unless a note references them again (protects against stale KV reads). Unreferenced files are never served. A failure before the KV write leaves the notes untouched; at worst an unused file is orphaned in R2 (harmless).
+- **Delete** (`POST <path>/admin/delete`): write the notes list to KV first, then move the note's files to the trash list.
+- **A new note** (no `original`) never inherits media from a note it replaces; only an edited note keeps its attachments.
 - **Moving a note's date** keeps its attachments.
 - **Serve to reader** (`GET <path>/media/<key>`): requires the reader cookie, and the key must belong to a note dated `<= today`. Otherwise 404.
 - **Serve to admin** (`GET <path>/admin/media/<key>`): requires the admin cookie (its cookie path is `<path>/admin`).
@@ -53,7 +54,7 @@ If a file arrives with an empty or generic type, it is inferred from the extensi
 2. Tests include a fixture shaped exactly like the live data (text-only notes) and assert it parses, renders, and survives an unrelated save unchanged.
 3. Rolf enables R2 and the `notes-media` bucket is created **before** pushing. If the bucket were missing, the deploy would fail and the current version would stay live.
 4. After deploy: check the reader page shows the existing notes, then add one test note with a photo and sound, then remove it.
-5. Rollback: `npx wrangler rollback` restores the previous Worker version. KV notes are unaffected either way (old code ignores the new optional fields).
+5. Rollback: `npx wrangler rollback` restores the previous Worker version. Reading is unaffected, but the old code drops `photo`/`audio` when it saves. So after a rollback, back up KV first and do not save or delete any note until the media version is redeployed.
 
 ## Testing
 
