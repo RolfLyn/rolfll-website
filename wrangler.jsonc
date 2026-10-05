@@ -8,5 +8,8 @@
   },
   "kv_namespaces": [
     { "binding": "NOTES", "id": "bda73f56540d463fb5683bb62063deda" }
+  ],
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "notes-media" }
   ]
 }

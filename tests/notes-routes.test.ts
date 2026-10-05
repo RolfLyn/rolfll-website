@@ -2,20 +2,21 @@ import { describe, it, expect, vi } from 'vitest';
 import { handleRequest, normalizeBase } from '../worker/index';
 import { csrfToken } from '../worker/auth';
 import type { Env } from '../worker/types';
-import { memoryKV } from './notes-helpers';
+import { memoryKV, memoryR2 } from './notes-helpers';
 
 const NOW = new Date('2026-10-01T10:00:00Z');
 const IP = { 'CF-Connecting-IP': '1.2.3.4' };
 
 function setup(overrides: Partial<Env> = {}) {
   const kv = memoryKV();
+  const media = memoryR2();
   const assets = { fetch: vi.fn(async (r: Request) => new Response(`asset:${new URL(r.url).pathname}`)) };
   const env: Env = {
-    NOTES: kv, ASSETS: assets, NOTES_PATH: '/for-you',
+    NOTES: kv, MEDIA: media, ASSETS: assets, NOTES_PATH: '/for-you',
     READER_PASSWORD: 'reader-pw', ADMIN_PASSWORD: 'admin-pw', COOKIE_SECRET: 'test-secret',
     ...overrides,
   };
-  return { env, kv, assets };
+  return { env, kv, assets, media };
 }
 
 const get = (path: string, cookie?: string) =>
@@ -34,6 +35,21 @@ async function login(env: Env, role: 'reader' | 'admin'): Promise<string> {
 async function adminCsrf(env: Env, cookie: string): Promise<string> {
   const html = await (await handleRequest(get('/for-you/admin', cookie), env, NOW)).text();
   return html.match(/name="csrf" value="([^"]+)"/)![1];
+}
+
+const postForm = (path: string, fields: Record<string, string | File>, cookie?: string) => {
+  const body = new FormData();
+  for (const [name, value] of Object.entries(fields)) body.append(name, value);
+  return new Request(`https://rolfll.com${path}`, { method: 'POST', body, headers: cookie ? { Cookie: cookie, ...IP } : IP });
+};
+const file = (name: string, type: string, size = 10) => new File([new Uint8Array(size).fill(7)], name, { type });
+const stored = (kv: ReturnType<typeof memoryKV>) => JSON.parse(kv.data.get('notes')!);
+
+async function adminWith(env: Env) {
+  const cookie = await login(env, 'admin');
+  const csrf = await adminCsrf(env, cookie);
+  const save = (fields: Record<string, string | File>) => handleRequest(postForm('/for-you/admin/save', { csrf, ...fields }, cookie), env, NOW);
+  return { cookie, csrf, save };
 }
 
 const seed = (kv: ReturnType<typeof memoryKV>, notes: { date: string; text: string }[]) =>
@@ -276,5 +292,134 @@ describe('corrupt storage', () => {
     const saveRes = await handleRequest(post('/for-you/admin/save', { csrf, date: '2026-10-01', text: 'x' }, cookie), env, NOW);
     expect(saveRes.status).toBe(500);
     expect(kv.data.get('notes')).toBe('garbage');
+  });
+});
+
+describe('media', () => {
+  it('saves a photo and a sound with a note, and the reader can load them', async () => {
+    const { env, kv, media } = setup();
+    const { save } = await adminWith(env);
+    const res = await save({ date: '2026-10-01', text: 'hi', photo: file('p.jpg', 'image/jpeg', 50), audio: file('Recording.m4a', '', 80) });
+    expect(res.status).toBe(303);
+    const [note] = stored(kv);
+    expect(note.photo.type).toBe('image/jpeg');
+    expect(note.audio.type).toBe('audio/mp4');
+    expect(media.objects.size).toBe(2);
+    const reader = await login(env, 'reader');
+    const html = await (await handleRequest(get('/for-you', reader), env, NOW)).text();
+    expect(html).toContain(`src="/for-you/media/${note.photo.key}"`);
+    const img = await handleRequest(get(`/for-you/media/${note.photo.key}`, reader), env, NOW);
+    expect(img.status).toBe(200);
+    expect(img.headers.get('Content-Type')).toBe('image/jpeg');
+    expect((await img.arrayBuffer()).byteLength).toBe(50);
+  });
+
+  it('keeps attachments when only the text is edited', async () => {
+    const { env, kv, media } = setup();
+    const { save } = await adminWith(env);
+    await save({ date: '2026-10-01', text: 'hi', photo: file('p.jpg', 'image/jpeg'), audio: file('a.mp3', 'audio/mpeg') });
+    const before = stored(kv)[0];
+    await save({ original: '2026-10-01', date: '2026-10-01', text: 'changed' });
+    const after = stored(kv)[0];
+    expect(after.text).toBe('changed');
+    expect(after.photo).toEqual(before.photo);
+    expect(after.audio).toEqual(before.audio);
+    expect(media.objects.size).toBe(2);
+  });
+
+  it('replaces and removes attachments, deleting the old files', async () => {
+    const { env, kv, media } = setup();
+    const { save } = await adminWith(env);
+    await save({ date: '2026-10-01', text: 'hi', photo: file('p.jpg', 'image/jpeg'), audio: file('a.mp3', 'audio/mpeg') });
+    const before = stored(kv)[0];
+    await save({ original: '2026-10-01', date: '2026-10-01', text: 'hi', photo: file('new.png', 'image/png'), remove_audio: '1' });
+    const after = stored(kv)[0];
+    expect(after.photo.key).not.toBe(before.photo.key);
+    expect(after.photo.type).toBe('image/png');
+    expect(after.audio).toBeUndefined();
+    expect([...media.objects.keys()]).toEqual([after.photo.key]);
+  });
+
+  it('moving a note keeps its attachments', async () => {
+    const { env, kv, media } = setup();
+    const { save } = await adminWith(env);
+    await save({ date: '2026-10-02', text: 'hi', photo: file('p.jpg', 'image/jpeg') });
+    const key = stored(kv)[0].photo.key;
+    await save({ original: '2026-10-02', date: '2026-10-05', text: 'hi' });
+    expect(stored(kv)).toEqual([{ date: '2026-10-05', text: 'hi', photo: { key, type: 'image/jpeg' } }]);
+    expect(media.objects.has(key)).toBe(true);
+  });
+
+  it('moving onto a date that has a note replaces it and deletes its files', async () => {
+    const { env, kv, media } = setup();
+    const { save } = await adminWith(env);
+    await save({ date: '2026-10-02', text: 'a', photo: file('p.jpg', 'image/jpeg') });
+    await save({ date: '2026-10-05', text: 'b', audio: file('a.mp3', 'audio/mpeg') });
+    const photoKey = stored(kv).find((n: { date: string }) => n.date === '2026-10-02').photo.key;
+    await save({ original: '2026-10-02', date: '2026-10-05', text: 'a' });
+    expect(stored(kv)).toEqual([{ date: '2026-10-05', text: 'a', photo: { key: photoKey, type: 'image/jpeg' } }]);
+    expect([...media.objects.keys()]).toEqual([photoKey]);
+  });
+
+  it('deleting a note deletes its files', async () => {
+    const { env, kv, media } = setup();
+    const { save, cookie, csrf } = await adminWith(env);
+    await save({ date: '2026-10-01', text: 'hi', photo: file('p.jpg', 'image/jpeg'), audio: file('a.mp3', 'audio/mpeg') });
+    await handleRequest(post('/for-you/admin/delete', { csrf, date: '2026-10-01' }, cookie), env, NOW);
+    expect(stored(kv)).toEqual([]);
+    expect(media.objects.size).toBe(0);
+  });
+
+  it('rejects unsupported files, stores nothing, and keeps the typed text', async () => {
+    const { env, kv, media } = setup();
+    const { save } = await adminWith(env);
+    for (const photo of [file('IMG_1.HEIC', 'image/heic'), file('x.svg', 'image/svg+xml')]) {
+      const res = await save({ date: '2026-10-01', text: 'kept', photo });
+      expect(res.status).toBe(400);
+      const html = await res.text();
+      expect(html).toContain('Photo must be JPG, PNG, WebP or GIF.');
+      expect(html).toContain('>kept</textarea>');
+    }
+    expect(kv.data.has('notes')).toBe(false);
+    expect(media.objects.size).toBe(0);
+  });
+
+  it('only serves media to the right people at the right time', async () => {
+    const { env, kv } = setup();
+    const { save, cookie: admin } = await adminWith(env);
+    await save({ date: '2026-10-02', text: 'future', photo: file('p.jpg', 'image/jpeg') });
+    const key = stored(kv)[0].photo.key;
+    const reader = await login(env, 'reader');
+    expect((await handleRequest(get(`/for-you/media/${key}`, reader), env, NOW)).status).toBe(404);
+    expect((await handleRequest(get(`/for-you/media/${key}`), env, NOW)).status).toBe(404);
+    expect((await handleRequest(get(`/for-you/admin/media/${key}`, reader), env, NOW)).status).toBe(404);
+    expect((await handleRequest(get(`/for-you/admin/media/${key}`, admin), env, NOW)).status).toBe(200);
+    expect((await handleRequest(get('/for-you/media/00000000-0000-4000-8000-000000000000.jpg', reader), env, NOW)).status).toBe(404);
+    expect((await handleRequest(get('/for-you/media/../notes', reader), env, NOW)).status).toBe(404);
+  });
+
+  it('serves byte ranges so iPhones can play sound', async () => {
+    const { env, kv } = setup();
+    const { save } = await adminWith(env);
+    await save({ date: '2026-10-01', text: 'hi', audio: file('a.m4a', 'audio/mp4', 80) });
+    const key = stored(kv)[0].audio.key;
+    const reader = await login(env, 'reader');
+    const res = await handleRequest(new Request(`https://rolfll.com/for-you/media/${key}`, { headers: { Cookie: reader, Range: 'bytes=0-9' } }), env, NOW);
+    expect(res.status).toBe(206);
+    expect(res.headers.get('Content-Range')).toBe('bytes 0-9/80');
+  });
+
+  it('leaves legacy text-only notes untouched when saving another note with media', async () => {
+    const { env, kv } = setup();
+    const legacy = [
+      { date: '2026-09-30', text: 'Line one\nLine two 💛' },
+      { date: '2026-09-29', text: 'First "quoted" note' },
+    ];
+    seed(kv, legacy);
+    const { save } = await adminWith(env);
+    await save({ date: '2026-10-01', text: 'new', photo: file('p.jpg', 'image/jpeg') });
+    const notes = stored(kv);
+    expect(notes.slice(1)).toEqual(legacy);
+    expect(JSON.stringify(notes.slice(1))).toBe(JSON.stringify(legacy));
   });
 });
