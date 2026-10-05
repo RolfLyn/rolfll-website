@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseNotes, selectForReader, upsertNote, removeNote, sortNewestFirst } from '../worker/notes';
+import { parseNotes, selectForReader, upsertNote, removeNote, sortNewestFirst, attachmentKeys, findByMediaKey } from '../worker/notes';
 
 const n = (date: string, text = `note ${date}`) => ({ date, text });
 
@@ -57,5 +57,37 @@ describe('parseNotes', () => {
     expect(() => parseNotes('{"date":"2026-10-01"}')).toThrow();
     expect(() => parseNotes('[{"date":"nope","text":"x"}]')).toThrow();
     expect(() => parseNotes('[{"date":"2026-10-01","text":5}]')).toThrow();
+  });
+});
+
+const KEY_A = '0b6f4a2e-1c3d-4e5f-8a9b-0c1d2e3f4a5b.jpg';
+const KEY_B = '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d.m4a';
+const LEGACY = '[{"date":"2026-10-06","text":"Tomorrow 💛"},{"date":"2026-09-30","text":"Line one\\nLine two"},{"date":"2026-09-29","text":"First \\"quoted\\" note"}]';
+
+describe('attachments', () => {
+  it('round-trips legacy text-only notes byte for byte', () => {
+    expect(JSON.stringify(parseNotes(LEGACY))).toBe(LEGACY);
+  });
+
+  it('parses notes with a photo and a sound', () => {
+    const raw = JSON.stringify([{ date: '2026-10-01', text: 'hi', photo: { key: KEY_A, type: 'image/jpeg' }, audio: { key: KEY_B, type: 'audio/mp4' } }]);
+    expect(parseNotes(raw)[0]).toEqual({ date: '2026-10-01', text: 'hi', photo: { key: KEY_A, type: 'image/jpeg' }, audio: { key: KEY_B, type: 'audio/mp4' } });
+  });
+
+  it('rejects malformed attachments', () => {
+    expect(() => parseNotes('[{"date":"2026-10-01","text":"x","photo":{"key":"../../etc","type":"image/jpeg"}}]')).toThrow();
+    expect(() => parseNotes(`[{"date":"2026-10-01","text":"x","audio":{"key":"${KEY_B}"}}]`)).toThrow();
+    expect(() => parseNotes('[{"date":"2026-10-01","text":"x","photo":"nope"}]')).toThrow();
+  });
+
+  it('lists and finds attachment keys', () => {
+    const notes = [
+      { date: '2026-10-01', text: 'a', photo: { key: KEY_A, type: 'image/jpeg' } },
+      { date: '2026-09-01', text: 'b', audio: { key: KEY_B, type: 'audio/mp4' } },
+      { date: '2026-08-01', text: 'c' },
+    ];
+    expect(notes.flatMap(attachmentKeys)).toEqual([KEY_A, KEY_B]);
+    expect(findByMediaKey(notes, KEY_B)?.date).toBe('2026-09-01');
+    expect(findByMediaKey(notes, 'missing')).toBeUndefined();
   });
 });
