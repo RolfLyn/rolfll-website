@@ -22,7 +22,7 @@ const READER_STYLE = `
 :root { --paper: #f6efe3; --ink: #3a2e28; --muted: #8c7b6c; --accent: #b0645a; --line: #e4d8c4; }
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink); font-family: 'Cormorant Garamond', Georgia, serif; }
-main { max-width: 36rem; margin: 0 auto; padding: 16vh 1.25rem 4rem; }
+main { max-width: 46rem; margin: 0 auto; padding: 16vh 1.25rem 4rem; }
 .date { color: var(--muted); font-style: italic; font-size: 1.05rem; margin: 0 0 1rem; }
 .message { font-size: clamp(1.6rem, 5vw, 2.2rem); line-height: 1.35; white-space: pre-line; margin: 0; animation: rise 1.8s ease-out both; }
 .photo { display: block; width: 100%; height: auto; border-radius: 0.6rem; margin: 1.75rem 0 0; animation: rise 1.8s ease-out both; }
