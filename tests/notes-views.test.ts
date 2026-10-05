@@ -80,7 +80,7 @@ const PK = '0b6f4a2e-1c3d-4e5f-8a9b-0c1d2e3f4a5b.jpg';
 const AK = '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d.m4a';
 
 describe('media in views', () => {
-  it("shows the photo above and the sound below today's message, and lazy media in the archive", () => {
+  it("shows the photo and then the sound below today's message, and lazy media in the archive", () => {
     const page = readerPage({
       mediaBase: '/for-you/media',
       current: { date: '2026-10-01', text: 'hi', photo: { key: PK, type: 'image/jpeg' }, audio: { key: AK, type: 'audio/mp4' } },
@@ -89,9 +89,11 @@ describe('media in views', () => {
     const photoAt = page.indexOf(`<img class="photo" src="/for-you/media/${PK}"`);
     const textAt = page.indexOf('<p class="message">hi</p>');
     const audioAt = page.indexOf(`<audio class="sound" controls preload="metadata" src="/for-you/media/${AK}"`);
-    expect(photoAt).toBeGreaterThan(-1);
-    expect(photoAt).toBeLessThan(textAt);
-    expect(audioAt).toBeGreaterThan(textAt);
+    expect(textAt).toBeGreaterThan(-1);
+    expect(photoAt).toBeGreaterThan(textAt);
+    expect(audioAt).toBeGreaterThan(photoAt);
+    const archive = page.slice(page.indexOf('<section class="archive"'));
+    expect(archive.indexOf('<img')).toBeGreaterThan(archive.indexOf('<p class="text">yo</p>'));
     expect(page).toContain('loading="lazy"');
     expect(page).toContain(`preload="none" src="/for-you/media/${AK}"`);
   });

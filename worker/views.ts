@@ -25,14 +25,14 @@ body { margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink)
 main { max-width: 36rem; margin: 0 auto; padding: 16vh 1.25rem 4rem; }
 .date { color: var(--muted); font-style: italic; font-size: 1.05rem; margin: 0 0 1rem; }
 .message { font-size: clamp(1.6rem, 5vw, 2.2rem); line-height: 1.35; white-space: pre-line; margin: 0; animation: rise 1.8s ease-out both; }
-.photo { display: block; width: 100%; height: auto; border-radius: 0.6rem; margin: 0 0 1.5rem; animation: rise 1.8s ease-out both; }
+.photo { display: block; width: 100%; height: auto; border-radius: 0.6rem; margin: 1.75rem 0 0; animation: rise 1.8s ease-out both; }
 .sound { display: block; width: 100%; margin: 1.5rem 0 0; }
 .heart { color: var(--accent); font-size: 1.4rem; text-align: center; margin: 3.5rem 0 2.5rem; }
 .archive h2 { font-weight: 500; font-style: italic; font-size: 1.1rem; color: var(--muted); margin: 0 0 1.5rem; }
 .archive article { border-top: 1px solid var(--line); padding: 1.25rem 0; }
 .archive .date { font-size: 0.95rem; margin-bottom: 0.4rem; }
 .archive p.text { margin: 0; font-size: 1.2rem; line-height: 1.45; white-space: pre-line; }
-.archive .photo { max-width: 16rem; margin: 0 0 0.75rem; animation: none; }
+.archive .photo { max-width: 16rem; margin: 0.75rem 0 0; animation: none; }
 .archive .sound { margin-top: 0.75rem; }
 .quiet { color: var(--muted); font-style: italic; font-size: 1.4rem; }
 form { display: flex; flex-direction: column; gap: 0.9rem; max-width: 20rem; }
@@ -160,14 +160,14 @@ export function readerLoginPage({ action, error }: { action: string; error?: str
 export function readerPage({ current, archive, mediaBase }: { current: Note | null; archive: Note[]; mediaBase: string }): string {
   const today = current
     ? `<p class="date">${formatDate(current.date)}</p>
-${photoTag(current, mediaBase, false)}
 <p class="message">${escapeHtml(current.text)}</p>
+${photoTag(current, mediaBase, false)}
 ${soundTag(current, mediaBase, false)}`
     : '<p class="quiet">Nothing here yet. Check back soon.</p>';
   const past = archive.length
     ? `<div class="heart" aria-hidden="true">&#9825;</div>
 <section class="archive"><h2>Earlier notes</h2>
-${archive.map((n) => `<article><p class="date">${formatDate(n.date)}</p>${photoTag(n, mediaBase, true)}<p class="text">${escapeHtml(n.text)}</p>${soundTag(n, mediaBase, true)}</article>`).join('\n')}
+${archive.map((n) => `<article><p class="date">${formatDate(n.date)}</p><p class="text">${escapeHtml(n.text)}</p>${photoTag(n, mediaBase, true)}${soundTag(n, mediaBase, true)}</article>`).join('\n')}
 </section>`
     : '';
   return readerShell(today + past);
