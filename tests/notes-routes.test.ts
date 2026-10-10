@@ -514,4 +514,21 @@ describe('game', () => {
     expect(html).toContain('>hello</textarea>');
     expect(kv.data.has('notes')).toBe(false);
   });
+
+  it('lets the admin preview any note, even a future one, as the reader would see it', async () => {
+    const { env, kv } = setup();
+    kv.data.set('notes', JSON.stringify([{ date: '2026-10-05', text: 'soon', game: GAME }]));
+    const admin = await login(env, 'admin');
+    const res = await handleRequest(get('/for-you/admin/preview?date=2026-10-05', admin), env, NOW);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('X-Robots-Tag')).toBe('noindex, nofollow');
+    const html = await res.text();
+    expect(html).toContain('soon');
+    expect(html).toContain('data-date="2026-10-05" data-preview>');
+    expect((await handleRequest(get('/for-you/admin/preview?date=2026-10-06', admin), env, NOW)).status).toBe(404);
+    const reader = await login(env, 'reader');
+    const asReader = await (await handleRequest(get('/for-you/admin/preview?date=2026-10-05', reader), env, NOW)).text();
+    expect(asReader).toContain('Admin password');
+    expect(asReader).not.toContain('soon');
+  });
 });

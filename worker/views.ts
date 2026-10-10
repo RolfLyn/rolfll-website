@@ -1,5 +1,6 @@
 import { GAME_LIMITS, type Note } from './notes';
 import { EMPTY_DRAFT, type GameDraft } from './game';
+import { GAME_SCRIPT, GAME_STYLE } from './game-script';
 
 const LOCALE = 'en-GB';
 const ROBOTS = '<meta name="robots" content="noindex, nofollow">';
@@ -188,20 +189,38 @@ export function readerLoginPage({ action, error }: { action: string; error?: str
 </form>`);
 }
 
-export function readerPage({ current, archive, mediaBase }: { current: Note | null; archive: Note[]; mediaBase: string }): string {
-  const today = current
+// Game settings travel as JSON; every "<" is escaped so a line can never close the script tag.
+function gameData(note: Note, preview: boolean): string {
+  if (!note.game) return '';
+  const json = JSON.stringify(note.game).replace(/</g, '\\u003c');
+  return `<script type="application/json" class="game-data" data-date="${escapeHtml(note.date)}"${preview ? ' data-preview' : ''}>${json}</script>`;
+}
+
+export function readerPage({ current, archive, mediaBase, preview = false }: {
+  current: Note | null; archive: Note[]; mediaBase: string; preview?: boolean;
+}): string {
+  const body = current
     ? `<p class="date">${formatDate(current.date)}</p>
 <p class="message">${escapeHtml(current.text)}</p>
 ${photoTag(current, mediaBase, false)}
 ${soundTag(current, mediaBase, false)}`
-    : '<p class="quiet">Nothing here yet. Check back soon.</p>';
+    : '';
+  const today = !current
+    ? '<p class="quiet">Nothing here yet. Check back soon.</p>'
+    : current.game
+      ? `<div class="note" data-game="${escapeHtml(current.date)}">\n${body}\n</div>`
+      : body;
   const past = archive.length
     ? `<div class="heart" aria-hidden="true">&#9825;</div>
 <section class="archive"><h2>Earlier notes</h2>
-${archive.map((n) => `<article><p class="date">${formatDate(n.date)}</p><p class="text">${escapeHtml(n.text)}</p>${photoTag(n, mediaBase, true)}${soundTag(n, mediaBase, true)}</article>`).join('\n')}
+${archive.map((n) => `<article${n.game ? ` data-game="${escapeHtml(n.date)}"` : ''}><p class="date">${formatDate(n.date)}</p><p class="text">${escapeHtml(n.text)}</p>${photoTag(n, mediaBase, true)}${soundTag(n, mediaBase, true)}</article>`).join('\n')}
 </section>`
     : '';
-  return readerShell(today + past);
+  const games = [current, ...archive].filter((n): n is Note => Boolean(n?.game));
+  const game = games.length
+    ? `\n${games.map((n) => gameData(n, preview)).join('\n')}\n<style>${GAME_STYLE}</style>\n${GAME_SCRIPT}`
+    : '';
+  return readerShell(today + past + game);
 }
 
 export function errorPage(message: string): string {

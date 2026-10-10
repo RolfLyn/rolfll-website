@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseGameForm, gameToDraft, EMPTY_DRAFT, GAME_INVALID } from '../worker/game';
+import { meetText, GAME_SCRIPT } from '../worker/game-script';
 
 const fields = (over: Record<string, string> = {}) => {
   const all: Record<string, string> = {
@@ -73,5 +74,37 @@ describe('gameToDraft', () => {
     expect(draft).toEqual({ kind: 'distance', from: 'Harbour', to: 'Hill', km: '10000', meet: '2026-10-21', lines: 'one\ntwo' });
     const get = (name: string) => (draft as unknown as Record<string, string>)[name.replace('game_', '')] ?? '';
     expect(parseGameForm(get).game).toEqual(game);
+  });
+});
+
+describe('meetText', () => {
+  const game = { to: 'Hill', meet: '2026-10-21' };
+
+  it('counts the sleeps until the meet date', () => {
+    expect(meetText(game, '2026-10-10')).toBe('Hill, 21 October · 11 more sleeps');
+  });
+
+  it('says one sleep, then today, then nothing', () => {
+    expect(meetText(game, '2026-10-20')).toBe('Hill, 21 October · 1 more sleep');
+    expect(meetText(game, '2026-10-21')).toBe('Hill, 21 October · Today!');
+    expect(meetText(game, '2026-10-22')).toBe('');
+  });
+
+  it('counts across month ends and is empty without a meet date', () => {
+    expect(meetText({ to: 'Hill', meet: '2026-11-02' }, '2026-10-30')).toBe('Hill, 2 November · 3 more sleeps');
+    expect(meetText({ to: 'Hill' }, '2026-10-30')).toBe('');
+  });
+});
+
+describe('GAME_SCRIPT', () => {
+  it('is one script element that parses as JavaScript', () => {
+    expect(GAME_SCRIPT.startsWith('<script>')).toBe(true);
+    expect(GAME_SCRIPT.indexOf('</script>')).toBe(GAME_SCRIPT.length - '</script>'.length);
+    expect(() => new Function(GAME_SCRIPT.slice('<script>'.length, -'</script>'.length))).not.toThrow();
+  });
+
+  it('carries the tested countdown code and no em dashes', () => {
+    expect(GAME_SCRIPT).toContain('more sleeps');
+    expect(GAME_SCRIPT).not.toContain('—');
   });
 });

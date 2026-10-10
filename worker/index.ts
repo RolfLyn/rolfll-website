@@ -198,6 +198,13 @@ async function showAdmin(request: Request, kv: KV, cfg: Config, now: Date, url: 
   return renderAdmin(notes, cfg, now, session, { form, original: editing?.date, flash, game: gameToDraft(editing?.game) });
 }
 
+async function showPreview(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
+  if (!(await adminSession(request, cfg, now))) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
+  const note = (await loadNotes(kv)).find((n) => n.date === url.searchParams.get('date'));
+  if (!note) return notFound();
+  return html(readerPage({ current: note, archive: [], mediaBase: `${cfg.base}/admin/media`, preview: true }));
+}
+
 async function showMedia(
   request: Request, env: Env, cfg: Config, now: Date, key: string, asAdmin: boolean,
 ): Promise<Response> {
@@ -293,6 +300,7 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
       case 'GET ': return await showReader(request, kv, cfg, now);
       case 'POST /login': return await handleLogin(request, kv, cfg, now, 'reader');
       case 'GET /admin': return await showAdmin(request, kv, cfg, now, url);
+      case 'GET /admin/preview': return await showPreview(request, kv, cfg, now, url);
       case 'POST /admin/login': return await handleLogin(request, kv, cfg, now, 'admin');
       case 'POST /admin/save': return await adminAction(request, env, cfg, now, 'save');
       case 'POST /admin/delete': return await adminAction(request, env, cfg, now, 'delete');

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   escapeHtml, formatDate, readerLoginPage, readerPage, errorPage, adminLoginPage, adminPage,
 } from '../worker/views';
+import { GAME_SCRIPT } from '../worker/game-script';
 
 const ROBOTS = '<meta name="robots" content="noindex, nofollow">';
 const admin = adminPage({
@@ -157,5 +158,47 @@ describe('game in views', () => {
     });
     expect(page).toContain('<span class="tag">Game</span>');
     expect(page).toContain('href="/for-you/admin/preview?date=2026-10-03"');
+  });
+});
+
+describe('game on the reader page', () => {
+  const GAME = { kind: 'distance' as const, from: 'Harbour', to: 'Hill', km: 10000, lines: ['first', 'a </script><b>x</b> <!--'], meet: '2026-10-21' };
+  const gameJson = (page: string, date: string) =>
+    JSON.parse(page.match(new RegExp(`class="game-data" data-date="${date}"[^>]*>([^<]*)</script>`))![1]);
+
+  it('a game note keeps its text in the page and carries its settings safely', () => {
+    const page = readerPage({ mediaBase: '/m', current: { date: '2026-10-10', text: 'hello', game: GAME }, archive: [] });
+    expect(page).toContain('<div class="note" data-game="2026-10-10">');
+    expect(page).toContain('<p class="message">hello</p>');
+    expect(page).not.toContain('</script><b>');
+    expect(page).not.toContain('<!--');
+    expect(gameJson(page, '2026-10-10')).toEqual(GAME);
+    expect(page).toContain(GAME_SCRIPT);
+    expect(page).toContain('class="game-data" data-date="2026-10-10">');
+  });
+
+  it('plain notes carry no game code', () => {
+    for (const page of [pages[1], pages[2]]) {
+      expect(page).not.toContain('game-data');
+      expect(page).not.toContain('data-game');
+      expect(page).not.toContain('notes-game-played:');
+    }
+  });
+
+  it('archive game notes get a hook, and a game with no lines or meet date is fine', () => {
+    const plain = { kind: 'distance' as const, from: 'Harbour', to: 'Hill', km: 5, lines: [] };
+    const page = readerPage({
+      mediaBase: '/m', current: { date: '2026-10-10', text: 'today' },
+      archive: [{ date: '2026-10-05', text: 'old', game: plain }],
+    });
+    expect(page).toContain('<article data-game="2026-10-05">');
+    expect(page).not.toContain('class="note"');
+    expect(gameJson(page, '2026-10-05')).toEqual(plain);
+    expect(page.split('notes-game-played:').length).toBe(2);
+  });
+
+  it('marks preview pages so the game always plays and remembers nothing', () => {
+    const page = readerPage({ mediaBase: '/m', current: { date: '2026-10-10', text: 'hi', game: GAME }, archive: [], preview: true });
+    expect(page).toContain('data-date="2026-10-10" data-preview>');
   });
 });
