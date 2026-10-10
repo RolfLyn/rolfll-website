@@ -46,6 +46,7 @@ A hidden, password-protected page served by the Worker script in `worker/`. Noth
 
 - Messages live in the `NOTES` KV namespace, as one JSON list under the key `notes`.
 - Photos and sound live in the `notes-media` R2 bucket (binding `MEDIA`), referenced from each note as `photo`/`audio`. They are only served through the Worker to logged-in viewers, with Range support. Deleting or replacing an attachment deletes its file a day later (a `trash` list in KV). After a `wrangler rollback` to a version without media support, do not save notes: old code drops the media references.
+- A note can carry an optional game (`game`, currently only "Close the distance"): start and destination labels, distance, optional meet date, and up to 8 short lines. The reader page shows the game first and reveals the note at the end; the note is always in the HTML, so it still shows without JavaScript. "Preview" in the admin list shows any note as the reader would see it. Older Worker versions drop `game` when saving, so after a rollback do not save notes.
 - Configuration is Cloudflare secrets: `NOTES_PATH` (e.g. `/for-you`), `READER_PASSWORD`, `ADMIN_PASSWORD`, `COOKIE_SECRET`. Set or change one with `npx wrangler secret put <NAME>`.
 - Daily use: open `<NOTES_PATH>/admin`, write a note, pick a date, save. The reader sees the latest note dated today or earlier (Copenhagen time), plus the earlier ones below it.
 - Changing `COOKIE_SECRET` logs everyone out. Changing `NOTES_PATH` moves the page.
