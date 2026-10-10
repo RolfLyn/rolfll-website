@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseNotes, selectForReader, upsertNote, removeNote, sortNewestFirst, attachmentKeys, findByMediaKey } from '../worker/notes';
+import { parseNotes, selectForReader, upsertNote, removeNote, sortNewestFirst, attachmentKeys, findByMediaKey, isGame } from '../worker/notes';
 
 const n = (date: string, text = `note ${date}`) => ({ date, text });
 
@@ -89,5 +89,42 @@ describe('attachments', () => {
     expect(notes.flatMap(attachmentKeys)).toEqual([KEY_A, KEY_B]);
     expect(findByMediaKey(notes, KEY_B)?.date).toBe('2026-09-01');
     expect(findByMediaKey(notes, 'missing')).toBeUndefined();
+  });
+});
+
+describe('games on notes', () => {
+  const game = { kind: 'distance', from: 'Harbour', to: 'Hill', km: 10000, meet: '2026-10-21', lines: ['one', 'two'] };
+
+  it('keeps a valid game and drops unknown fields', () => {
+    const raw = JSON.stringify([{ date: '2026-10-10', text: 'hi', game: { ...game, extra: 'x' } }]);
+    expect(parseNotes(raw)).toEqual([{ date: '2026-10-10', text: 'hi', game }]);
+  });
+
+  it('accepts a game with no lines and no meet date', () => {
+    const plain = { kind: 'distance', from: 'Harbour', to: 'Hill', km: 1, lines: [] };
+    expect(parseNotes(JSON.stringify([{ date: '2026-10-10', text: 'hi', game: plain }]))[0].game).toEqual(plain);
+  });
+
+  it('leaves notes without a game exactly as they were', () => {
+    const raw = JSON.stringify([{ date: '2026-10-10', text: 'hi' }]);
+    expect(JSON.stringify(parseNotes(raw))).toBe(raw);
+  });
+
+  it.each([
+    ['unknown kind', { ...game, kind: 'maze' }],
+    ['blank start', { ...game, from: '  ' }],
+    ['long destination', { ...game, to: 'x'.repeat(41) }],
+    ['zero km', { ...game, km: 0 }],
+    ['fractional km', { ...game, km: 1.5 }],
+    ['too many km', { ...game, km: 40001 }],
+    ['km as text', { ...game, km: '10' }],
+    ['impossible meet date', { ...game, meet: '2026-02-30' }],
+    ['nine lines', { ...game, lines: Array(9).fill('x') }],
+    ['long line', { ...game, lines: ['x'.repeat(161)] }],
+    ['blank line', { ...game, lines: [' '] }],
+    ['lines not a list', { ...game, lines: 'one' }],
+  ])('rejects a game with %s', (_label, bad) => {
+    expect(isGame(bad)).toBe(false);
+    expect(() => parseNotes(JSON.stringify([{ date: '2026-10-10', text: 'hi', game: bad }]))).toThrow();
   });
 });
