@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseGameForm, gameToDraft, EMPTY_DRAFT, GAME_INVALID } from '../worker/game';
-import { meetText, GAME_SCRIPT } from '../worker/game-script';
+import { meetText, catchText, GAME_SCRIPT, GAME_STYLE } from '../worker/game-script';
 
 const fields = (over: Record<string, string> = {}) => {
   const all: Record<string, string> = {
@@ -106,5 +106,34 @@ describe('GAME_SCRIPT', () => {
   it('carries the tested countdown code and no em dashes', () => {
     expect(GAME_SCRIPT).toContain('more sleeps');
     expect(GAME_SCRIPT).not.toContain('—');
+  });
+});
+
+describe('catchText', () => {
+  it('counts the lights caught', () => {
+    expect(catchText(6, 8)).toBe('You caught 6 of 8 lights');
+    expect(catchText(0, 8)).toBe('You caught 0 of 8 lights');
+    expect(catchText(0, 1)).toBe('You caught 0 of 1 light');
+  });
+
+  it('celebrates catching every light, and says nothing without lights', () => {
+    expect(catchText(8, 8)).toBe('You caught every light');
+    expect(catchText(1, 1)).toBe('You caught every light');
+    expect(catchText(0, 0)).toBe('');
+  });
+});
+
+describe('game polish', () => {
+  it('draws no dotted path and embeds the tested catch wording', () => {
+    expect(GAME_SCRIPT).not.toContain('setLineDash');
+    expect(GAME_SCRIPT).toContain('You caught every light');
+  });
+
+  it('keeps each line up for about eight seconds', () => {
+    expect(GAME_STYLE).toContain('animation: drift 8s');
+  });
+
+  it('keeps the browser helpers free of nested functions, which the bundler would break', () => {
+    for (const fn of [meetText, catchText]) expect(fn.toString()).not.toMatch(/=>|function[\s\S]*function/);
   });
 });
