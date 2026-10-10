@@ -79,7 +79,7 @@ export const GAME_SCRIPT = `<script>
     begin.type = 'button';
     skip.type = 'button';
     intro.appendChild(el('p', 'game-intro-title', 'Fly from ' + g.from + ' to ' + g.to));
-    intro.appendChild(el('p', 'game-intro-hint', 'Hold and drag to steer through the little lights'));
+    intro.appendChild(el('p', 'game-intro-hint', 'Hold and drag to catch the little lights and dodge the rain clouds'));
     intro.appendChild(begin);
     stage.appendChild(canvas);
     stage.appendChild(line);

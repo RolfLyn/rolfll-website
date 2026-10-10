@@ -137,3 +137,9 @@ describe('game polish', () => {
     for (const fn of [meetText, catchText]) expect(fn.toString()).not.toMatch(/=>|function[\s\S]*function/);
   });
 });
+
+describe('game intro', () => {
+  it('tells her to catch the lights and dodge the rain clouds', () => {
+    expect(GAME_SCRIPT).toContain('Hold and drag to catch the little lights and dodge the rain clouds');
+  });
+});
