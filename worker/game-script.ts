@@ -15,7 +15,10 @@ export const GAME_STYLE = `
 .game-line { position: absolute; left: 1rem; right: 1rem; top: 0.9rem; margin: 0; text-align: center; color: #fff7ec; font-style: italic; font-size: clamp(1.05rem, 3.6vw, 1.35rem); line-height: 1.3; opacity: 0; text-shadow: 0 1px 8px rgba(42, 27, 61, 0.6); pointer-events: none; }
 .game-line.show { animation: drift 5s ease-out both; }
 .game-km { position: absolute; right: 0.9rem; bottom: 0.6rem; margin: 0; color: rgba(255, 247, 236, 0.85); font-size: 0.95rem; font-variant-numeric: tabular-nums; pointer-events: none; }
-.game-begin { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(255, 247, 236, 0.92); color: var(--ink); font-size: 1.3rem; padding: 0.6rem 1.6rem; border-radius: 999px; }
+.game-intro { position: absolute; inset: 0; text-wrap: balance; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.5rem; padding: 1.25rem; text-align: center; background: rgba(42, 27, 61, 0.35); }
+.game-intro-title { margin: 0; color: #fff7ec; font-style: italic; font-size: clamp(1.45rem, 5.5vw, 1.9rem); line-height: 1.2; text-shadow: 0 1px 8px rgba(42, 27, 61, 0.6); }
+.game-intro-hint { margin: 0 0 0.6rem; color: rgba(255, 247, 236, 0.88); font-size: 1.05rem; line-height: 1.3; text-shadow: 0 1px 6px rgba(42, 27, 61, 0.6); }
+.game-begin { background: rgba(255, 247, 236, 0.92); color: var(--ink); font-size: 1.3rem; padding: 0.6rem 1.6rem; border-radius: 999px; }
 .game-skip { display: block; margin: 0.7rem auto 0; background: none; color: var(--muted); font-style: italic; font-size: 1rem; padding: 0.3rem; text-decoration: underline; }
 .replay { display: inline-block; margin: 1rem 0 0; background: none; color: var(--accent); border: 1px solid var(--accent); font-size: 1rem; padding: 0.3rem 0.9rem; border-radius: 999px; }
 .meet { color: var(--accent); font-style: italic; font-size: 1.15rem; margin: 0 0 0.6rem; }
@@ -61,19 +64,25 @@ export const GAME_SCRIPT = `<script>
     var line = el('p', 'game-line');
     line.setAttribute('aria-live', 'polite');
     var km = el('p', 'game-km');
+    var intro = el('div', 'game-intro');
     var begin = el('button', 'game-begin', 'Begin');
     var skip = el('button', 'game-skip', 'Skip to the note');
     begin.type = 'button';
     skip.type = 'button';
+    intro.appendChild(el('p', 'game-intro-title', 'Fly from ' + g.from + ' to ' + g.to));
+    intro.appendChild(el('p', 'game-intro-hint', 'Hold and drag to steer through the little lights'));
+    intro.appendChild(begin);
     stage.appendChild(canvas);
     stage.appendChild(line);
     stage.appendChild(km);
-    stage.appendChild(begin);
+    stage.appendChild(intro);
     card.appendChild(stage);
     card.appendChild(skip);
-    before.parentNode.insertBefore(card, before);
 
+    // Fail before anything is on the page, so the caller can simply show the note instead.
     var ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('No canvas');
+    before.parentNode.insertBefore(card, before);
     var W = 0, H = 0, p = 0, y = 0.5, targetY = 0.5;
     var running = false, ended = false, last = 0, slowUntil = 0, metAt = 0, raf = 0;
     var count = g.lines.length;
@@ -157,12 +166,22 @@ export const GAME_SCRIPT = `<script>
         });
       });
       var sx = routeX(p) * W, sy = y * H, ex = END * W, ey = 0.5 * H;
+      ctx.save();
+      ctx.setLineDash([2, 9]);
+      ctx.lineCap = 'round';
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(255,247,236,' + (0.4 * (1 - warm)) + ')';
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      ctx.restore();
       glow(ex, ey, H * (0.09 + 0.5 * warm), 'rgba(255,224,150,0.9)');
       dot(ex, ey, H * 0.018, '#fff6dc');
       glow(sx, sy, H * 0.1, 'rgba(255,200,120,0.85)');
       dot(sx, sy, H * 0.03, '#ffd98f');
       label(g.to, ex, ey + H * 0.1, 0.85 * (1 - warm));
-      label(g.from, START * W, 0.5 * H + H * 0.13, 0.85 * (1 - p * 10));
+      label(g.from, sx, sy + H * 0.13, 0.85 * clamp((0.25 - p) / 0.1, 0, 1));
     }
 
     function frame(t) {
@@ -223,7 +242,7 @@ export const GAME_SCRIPT = `<script>
     window.addEventListener('keydown', onKey);
     window.addEventListener('resize', onResize);
     begin.addEventListener('click', function () {
-      begin.hidden = true;
+      intro.hidden = true;
       running = true;
       try { canvas.focus({ preventScroll: true }); } catch (e) {}
     });
@@ -246,16 +265,27 @@ export const GAME_SCRIPT = `<script>
     var button = el('button', 'replay', 'Play again');
     button.type = 'button';
     note.appendChild(button);
+    function reveal() {
+      note.classList.remove('game-reveal');
+      void note.offsetWidth;
+      note.classList.add('game-reveal');
+      note.hidden = false;
+    }
     function play() {
       note.hidden = true;
-      createGame(g, note, function () {
-        if (!preview) remember(date);
-        button.textContent = 'Play again';
-        note.classList.remove('game-reveal');
-        void note.offsetWidth;
-        note.classList.add('game-reveal');
-        note.hidden = false;
-      });
+      try {
+        createGame(g, note, function () {
+          if (!preview) remember(date);
+          button.textContent = 'Play again';
+          reveal();
+        });
+      } catch (e) {
+        // If the game cannot start, never leave the note hidden behind a frozen card.
+        var stray = note.previousElementSibling;
+        if (stray && stray.classList.contains('game-card')) stray.parentNode.removeChild(stray);
+        button.hidden = true;
+        reveal();
+      }
     }
     button.addEventListener('click', play);
     if (!note.classList.contains('note')) return;
