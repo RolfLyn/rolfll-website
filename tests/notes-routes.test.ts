@@ -460,3 +460,58 @@ describe('media', () => {
     expect(stored(kv)).toEqual([{ date: '2026-10-01', text: 'hi' }]);
   });
 });
+
+describe('game', () => {
+  const GAME_FIELDS = {
+    game_kind: 'distance', game_from: 'Harbour', game_to: 'Hill', game_km: '10.000',
+    game_meet: '2026-10-21', game_lines: 'first line\r\n\r\n  second line  \n',
+  };
+  const GAME = { kind: 'distance', from: 'Harbour', to: 'Hill', km: 10000, lines: ['first line', 'second line'], meet: '2026-10-21' };
+
+  it('saves a game with a note', async () => {
+    const { env, kv } = setup();
+    const { save } = await adminWith(env);
+    expect((await save({ date: '2026-10-01', text: 'hello', ...GAME_FIELDS })).status).toBe(303);
+    expect(stored(kv)).toEqual([{ date: '2026-10-01', text: 'hello', game: GAME }]);
+  });
+
+  it('prefills the game when editing, keeps it on a text-only edit, and None removes it', async () => {
+    const { env, kv } = setup();
+    kv.data.set('notes', JSON.stringify([{ date: '2026-10-01', text: 'hello', game: GAME }]));
+    const { cookie, save } = await adminWith(env);
+    const form = await (await handleRequest(get('/for-you/admin?edit=2026-10-01', cookie), env, NOW)).text();
+    expect(form).toContain('<option value="distance" selected>');
+    expect(form).toContain('name="game_from" maxlength="40" value="Harbour"');
+    expect(form).toContain('first line\nsecond line</textarea>');
+
+    await save({
+      original: '2026-10-01', date: '2026-10-01', text: 'edited', game_kind: 'distance', game_from: 'Harbour',
+      game_to: 'Hill', game_km: '10000', game_meet: '2026-10-21', game_lines: 'first line\nsecond line',
+    });
+    expect(stored(kv)).toEqual([{ date: '2026-10-01', text: 'edited', game: GAME }]);
+
+    await save({ original: '2026-10-01', date: '2026-10-01', text: 'edited', game_kind: '' });
+    expect(stored(kv)).toEqual([{ date: '2026-10-01', text: 'edited' }]);
+  });
+
+  it('a new note on a date that has a game note does not inherit the game', async () => {
+    const { env, kv } = setup();
+    kv.data.set('notes', JSON.stringify([{ date: '2026-10-01', text: 'hello', game: GAME }]));
+    const { save } = await adminWith(env);
+    await save({ date: '2026-10-01', text: 'fresh' });
+    expect(stored(kv)).toEqual([{ date: '2026-10-01', text: 'fresh' }]);
+  });
+
+  it('rejects a bad game, stores nothing, and keeps what was typed', async () => {
+    const { env, kv } = setup();
+    const { save } = await adminWith(env);
+    const res = await save({ date: '2026-10-01', text: 'hello', ...GAME_FIELDS, game_km: 'far' });
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    expect(html).toContain('The game needs');
+    expect(html).toContain('name="game_km" inputmode="numeric" value="far"');
+    expect(html).toContain('value="Harbour"');
+    expect(html).toContain('>hello</textarea>');
+    expect(kv.data.has('notes')).toBe(false);
+  });
+});

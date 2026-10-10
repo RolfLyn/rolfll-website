@@ -1,4 +1,5 @@
-import type { Note } from './notes';
+import { GAME_LIMITS, type Note } from './notes';
+import { EMPTY_DRAFT, type GameDraft } from './game';
 
 const LOCALE = 'en-GB';
 const ROBOTS = '<meta name="robots" content="noindex, nofollow">';
@@ -51,7 +52,7 @@ h1 { font-size: 1.3rem; } h2 { font-size: 1.05rem; margin-top: 2rem; }
 .box { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 0.75rem 1rem; white-space: pre-line; }
 .flash { background: #e8f5e9; padding: 0.5rem 0.75rem; border-radius: 6px; }
 form.write, form.login { display: flex; flex-direction: column; gap: 0.6rem; }
-input, textarea, button { font: inherit; font-size: 16px; padding: 0.55rem; border: 1px solid #ccc; border-radius: 6px; }
+input, textarea, button, select { font: inherit; font-size: 16px; padding: 0.55rem; border: 1px solid #ccc; border-radius: 6px; }
 textarea { min-height: 9rem; resize: vertical; }
 button { background: #222; color: #fff; border-color: #222; cursor: pointer; }
 button:disabled { opacity: 0.6; }
@@ -70,6 +71,9 @@ li .thumb { margin-top: 0.4rem; }
 .actions form { display: inline; margin: 0; }
 .actions button { padding: 0.2rem 0.6rem; font-size: 0.85rem; background: #fff; color: #a33; border-color: #dbb; }
 .error { color: #a33; }
+fieldset.game, .game-fields { display: flex; flex-direction: column; gap: 0.6rem; }
+fieldset.game { border: 1px solid #ddd; border-radius: 8px; padding: 0.6rem 0.9rem 0.9rem; margin: 0; }
+.game-fields[hidden] { display: none; }
 `;
 
 // Shrinks a chosen photo in the browser before upload (also drops EXIF such as location).
@@ -105,6 +109,33 @@ const RESIZE_SCRIPT = `<script>
   });
 })();
 </script>`;
+
+// Shows the game's own fields only when a game is chosen.
+const GAME_TOGGLE_SCRIPT = `<script>
+(function () {
+  var select = document.querySelector('select[name=game_kind]');
+  var fields = document.querySelector('.game-fields');
+  if (!select || !fields) return;
+  select.addEventListener('change', function () { fields.hidden = select.value === ''; });
+})();
+</script>`;
+
+function gameFields(draft: GameDraft): string {
+  const on = draft.kind === 'distance';
+  return `<fieldset class="game">
+  <label class="file">Game<select name="game_kind">
+    <option value="">None</option>
+    <option value="distance"${on ? ' selected' : ''}>Close the distance</option>
+  </select></label>
+  <div class="game-fields"${on ? '' : ' hidden'}>
+    <label class="file">From<input name="game_from" maxlength="${GAME_LIMITS.place}" value="${escapeHtml(draft.from)}"></label>
+    <label class="file">To<input name="game_to" maxlength="${GAME_LIMITS.place}" value="${escapeHtml(draft.to)}"></label>
+    <label class="file">Distance (km)<input name="game_km" inputmode="numeric" value="${escapeHtml(draft.km)}"></label>
+    <label class="file">Meet date (optional)<input type="date" name="game_meet" value="${escapeHtml(draft.meet)}"></label>
+    <label class="file">Lines along the way (one per row, up to ${GAME_LIMITS.lines})<textarea name="game_lines" rows="6">${escapeHtml(draft.lines)}</textarea></label>
+  </div>
+</fieldset>`;
+}
 
 function shell(title: string, style: string, body: string, fonts = ''): string {
   return `<!doctype html>
@@ -193,6 +224,8 @@ export interface AdminPageData {
   current: Note | null;
   notes: Note[];
   form: Note;
+  /** The game fields as typed or as stored; empty when the note has no game. */
+  game?: GameDraft;
   /** Date of the note being edited, so a changed date moves it instead of copying it. */
   original?: string;
   csrf: string;
@@ -206,8 +239,9 @@ export function adminPage(d: AdminPageData): string {
   const status = (n: Note) => (n.date === d.current?.date ? 'Showing now' : n.date > d.today ? 'Queued' : 'Past');
   const rows = d.notes.map((n) => `<li>
   <div class="meta">
-    <span>${formatDate(n.date)}<span class="tag">${status(n)}</span>${n.audio ? '<span class="tag">Sound</span>' : ''}</span>
+    <span>${formatDate(n.date)}<span class="tag">${status(n)}</span>${n.audio ? '<span class="tag">Sound</span>' : ''}${n.game ? '<span class="tag">Game</span>' : ''}</span>
     <span class="actions">
+      <a href="${escapeHtml(`${d.base}/admin/preview?date=${n.date}`)}">Preview</a>
       <a href="${escapeHtml(`${d.base}/admin?edit=${n.date}`)}">Edit</a>
       <form method="post" action="${escapeHtml(`${d.base}/admin/delete`)}" onsubmit="return confirm('Delete this note?')">
         ${csrf}<input type="hidden" name="date" value="${escapeHtml(n.date)}"><button type="submit">Delete</button>
@@ -242,9 +276,11 @@ ${errorLine(d.error)}
   <label class="file">Sound (optional)<input type="file" name="audio" accept="audio/*,.m4a"></label>
   ${currentSound}
   <p class="hint">Photos are shrunk before upload. Sound: M4A, MP3, AAC or WAV, up to 25 MB.</p>
+  ${gameFields(d.game ?? EMPTY_DRAFT)}
   <button type="submit">Save</button>
 </form>
 ${RESIZE_SCRIPT}
+${GAME_TOGGLE_SCRIPT}
 <h2>All notes</h2>
 <ul>${rows || '<li>No notes yet.</li>'}</ul>`);
 }

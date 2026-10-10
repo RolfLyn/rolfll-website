@@ -8,6 +8,7 @@ import {
   readCookie, sessionCookie, isLockedOut, recordFailure, clientKey, type Role,
 } from './auth';
 import { checkFile, newKey, serveMedia, type MediaKind } from './media';
+import { gameToDraft, parseGameForm, type GameDraft } from './game';
 import { readerLoginPage, readerPage, errorPage, adminLoginPage, adminPage } from './views';
 import type { Env, KV, R2 } from './types';
 
@@ -164,6 +165,7 @@ interface AdminView {
   original?: string;
   flash?: string;
   error?: string;
+  game?: GameDraft;
 }
 
 async function renderAdmin(
@@ -193,7 +195,7 @@ async function showAdmin(request: Request, kv: KV, cfg: Config, now: Date, url: 
   const form = editing ?? { date: nextEmptyDate(notes.map((n) => n.date), todayInCopenhagen(now)), text: '' };
   const msg = url.searchParams.get('msg') ?? '';
   const flash = Object.hasOwn(FLASH, msg) ? FLASH[msg] : undefined;
-  return renderAdmin(notes, cfg, now, session, { form, original: editing?.date, flash });
+  return renderAdmin(notes, cfg, now, session, { form, original: editing?.date, flash, game: gameToDraft(editing?.game) });
 }
 
 async function showMedia(
@@ -233,15 +235,18 @@ async function adminAction(
   const audioFile = uploadedFile(form, 'audio');
   const photoCheck = photoFile ? checkFile('photo', photoFile) : null;
   const audioCheck = audioFile ? checkFile('audio', audioFile) : null;
+  const gameForm = parseGameForm((name) => field(form, name));
   const errors: string[] = [];
   if (!isValidDate(date) || text === '' || text.length > MAX_LENGTH) errors.push(INVALID);
   if (photoCheck && !photoCheck.ok) errors.push(photoCheck.error);
   if (audioCheck && !audioCheck.ok) errors.push(audioCheck.error);
+  if (gameForm.error) errors.push(gameForm.error);
   if (errors.length > 0) {
     return renderAdmin(notes, cfg, now, session, {
       form: { ...existing, date, text },
       original: original || undefined,
       error: errors.join(' '),
+      game: gameForm.draft,
     }, 400);
   }
 
@@ -256,6 +261,7 @@ async function adminAction(
   );
   if (photo) note.photo = photo;
   if (audio) note.audio = audio;
+  if (gameForm.game) note.game = gameForm.game;
   const kept = original && original !== date ? removeNote(notes, original) : notes;
   const next = upsertNote(kept, note);
   await storeNotes(env.NOTES, next);

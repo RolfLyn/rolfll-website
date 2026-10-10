@@ -128,3 +128,34 @@ describe('media in views', () => {
     expect(page).not.toContain('remove_audio');
   });
 });
+
+describe('game in views', () => {
+  it('admin form has game fields, hidden until a game is chosen', () => {
+    expect(admin).toContain('<select name="game_kind">');
+    expect(admin).toContain('<option value="distance">Close the distance</option>');
+    expect(admin).toContain('<div class="game-fields" hidden>');
+  });
+
+  it('admin form shows a game being edited', () => {
+    const page = adminPage({
+      base: '/for-you', today: '2026-10-01', current: null, notes: [], csrf: 't',
+      form: { date: '2026-10-02', text: 'x' },
+      game: { kind: 'distance', from: 'Harbour', to: 'Hill', km: '10000', meet: '2026-10-21', lines: 'one\n<two>' },
+    });
+    expect(page).toContain('<option value="distance" selected>');
+    expect(page).toContain('<div class="game-fields">');
+    expect(page).toContain('name="game_from" maxlength="40" value="Harbour"');
+    expect(page).toContain('name="game_km" inputmode="numeric" value="10000"');
+    expect(page).toContain('name="game_meet" value="2026-10-21"');
+    expect(page).toContain('one\n&lt;two&gt;</textarea>');
+  });
+
+  it('admin list tags game notes and links every note to a preview', () => {
+    const page = adminPage({
+      base: '/for-you', today: '2026-10-01', current: null, csrf: 't', form: { date: '2026-10-02', text: '' },
+      notes: [{ date: '2026-10-03', text: 'later', game: { kind: 'distance', from: 'Harbour', to: 'Hill', km: 5, lines: [] } }],
+    });
+    expect(page).toContain('<span class="tag">Game</span>');
+    expect(page).toContain('href="/for-you/admin/preview?date=2026-10-03"');
+  });
+});
