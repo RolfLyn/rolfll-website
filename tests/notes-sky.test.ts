@@ -49,6 +49,8 @@ describe('skyMarkup', () => {
     expect(arrived).toContain('sky-arrived');
     expect(arrived).toContain('class="sky-lines"');
     expect(arrived).toMatch(/--dx:-?[\d.]+px;--dy:-?[\d.]+px;--i:1/);
+    const outline = arrived.match(/class="sky-lines" points="([^"]+)"/)![1].split(' ');
+    expect(outline.length).toBeGreaterThanOrEqual(60);
     const kept = skyMarkup(sky({ state: 'kept', sleeps: 0 }));
     expect(kept).toContain('sky-kept');
     expect(kept).toContain('class="sky-lines"');

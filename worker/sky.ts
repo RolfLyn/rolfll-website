@@ -3,6 +3,7 @@ import type { Sky } from './meetings';
 
 export const SKY_W = 320;
 export const SKY_H = 120;
+const OUTLINE_POINTS = 96;
 
 interface Point {
   x: number;
@@ -64,8 +65,9 @@ export function skyMarkup(sky: Sky): string {
     const h = heart[i];
     return `<circle class="star" cx="${h.x}" cy="${h.y}" r="2.2" style="--dx:${round(s.x - h.x)}px;--dy:${round(s.y - h.y)}px;--i:${i}"/>`;
   }).join('');
+  // The outline is a smooth heart of its own, so it reads as a heart however few stars sit on it.
   const lines = gathered && heart.length > 1
-    ? `<polygon class="sky-lines" points="${heart.map((p) => `${p.x},${p.y}`).join(' ')}"/>`
+    ? `<polygon class="sky-lines" points="${heartPoints(Math.max(OUTLINE_POINTS, heart.length)).map((p) => `${p.x},${p.y}`).join(' ')}"/>`
     : '';
   return `<figure class="sky sky-${sky.state}" style="--n:${sky.stars.length}">
 <svg viewBox="0 0 ${SKY_W} ${SKY_H}" role="img" aria-label="${caption}">${lines}${stars}</svg>
