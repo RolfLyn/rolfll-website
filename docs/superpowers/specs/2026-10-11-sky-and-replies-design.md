@@ -72,13 +72,13 @@ The note dated on the meeting day is the arrival message. It renders like any no
   - A `♥` toggle (a checkbox styled as a heart), and a "Write something back" disclosure (`<details>`) holding a textarea (maxlength 280) and a Send button.
   - When a reply exists, it is shown under the note ("You sent ♥" and/or her text in quotes), and the form is prefilled so she can change or clear it.
 - Submits as a normal form `POST <base>/reply` with fields `date`, `heart` (`on` or absent), `text` and `csrf`, then redirects (303) to `<base>/#note-<date>`. A small optional script may submit the heart toggle immediately on change; the form works without it.
-- On error (too long, unknown or future date, bad CSRF), it redirects back with `?reply=error#note-<date>`, which shows a gentle line: "That didn't send. Try again?"
+- A reply that is too long redirects back with `?unsent=<date>#note-<date>`, which shows a gentle line under that note: "That didn't send. Try again?" A bad CSRF token gets the same 403 page as admin ("That form expired…"), and an unknown or future date gets the 404 page; neither can happen from the real form.
 - In Preview the reply area is rendered with its controls disabled and no form action.
 
 ### Server
 
 - `POST /reply` requires a valid reader session cookie and a CSRF token derived from that session (the same mechanism as admin, `csrfToken(session)`).
-- `date` must belong to an existing note with `date <= today`. Otherwise 400 / error redirect.
+- `date` must belong to an existing note with `date <= today`. Otherwise 404.
 - The text is validated as above, then the reply is upserted or removed and `replies` is written.
 - The reader page passes the CSRF token and the replies to the view.
 
