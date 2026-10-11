@@ -62,3 +62,14 @@ describe('skyMarkup', () => {
     expect(html).toContain('&lt;b&gt;&quot;x&quot;&lt;/b&gt;');
   });
 });
+
+describe('heart outline with few stars', () => {
+  it('still draws the heart on arrival and afterwards with no stars or one', () => {
+    for (const stars of [[], ['2026-10-01']]) {
+      for (const state of ['arrived', 'kept'] as const) {
+        expect(skyMarkup(sky({ state, sleeps: 0, stars }))).toContain('class="sky-lines"');
+      }
+    }
+    expect(skyMarkup(sky({ stars: [] }))).not.toContain('sky-lines');
+  });
+});

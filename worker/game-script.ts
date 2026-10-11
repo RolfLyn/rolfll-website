@@ -307,7 +307,8 @@ export const GAME_SCRIPT = `<script>
     if (meet) note.insertBefore(el('p', 'meet', meet), note.firstChild);
     var button = el('button', 'replay', seen ? 'Play again' : 'Play');
     button.type = 'button';
-    note.appendChild(button);
+    // Above the reply area when there is one (insertBefore with null appends).
+    note.insertBefore(button, note.querySelector('.reply'));
     function showScore(caught, total) {
       var old = note.querySelector('.catch');
       if (old) old.parentNode.removeChild(old);

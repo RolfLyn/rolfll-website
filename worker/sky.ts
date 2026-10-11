@@ -66,7 +66,7 @@ export function skyMarkup(sky: Sky): string {
     return `<circle class="star" cx="${h.x}" cy="${h.y}" r="2.2" style="--dx:${round(s.x - h.x)}px;--dy:${round(s.y - h.y)}px;--i:${i}"/>`;
   }).join('');
   // The outline is a smooth heart of its own, so it reads as a heart however few stars sit on it.
-  const lines = gathered && heart.length > 1
+  const lines = gathered
     ? `<polygon class="sky-lines" points="${heartPoints(Math.max(OUTLINE_POINTS, heart.length)).map((p) => `${p.x},${p.y}`).join(' ')}"/>`
     : '';
   return `<figure class="sky sky-${sky.state}" style="--n:${sky.stars.length}">

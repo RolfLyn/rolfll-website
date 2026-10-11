@@ -143,3 +143,10 @@ describe('game intro', () => {
     expect(GAME_SCRIPT).toContain('Hold and drag to catch the little lights and dodge the rain clouds');
   });
 });
+
+describe('game with replies', () => {
+  it('puts the Play button above the reply area, not below it', () => {
+    expect(GAME_SCRIPT).toContain("note.insertBefore(button, note.querySelector('.reply'));");
+    expect(GAME_SCRIPT).not.toContain('note.appendChild(button);');
+  });
+});
