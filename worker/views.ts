@@ -3,7 +3,7 @@ import { EMPTY_DRAFT, type GameDraft } from './game';
 import { GAME_SCRIPT, GAME_STYLE } from './game-script';
 import { escapeHtml } from './html';
 import { skyMarkup, SKY_STYLE } from './sky';
-import type { Sky } from './meetings';
+import { EMPTY_MEETING, MEETING_PLACE_MAX, type Meeting, type MeetingDraft, type Sky } from './meetings';
 import type { Reply } from './replies';
 
 export { escapeHtml };
@@ -88,6 +88,11 @@ li .thumb { margin-top: 0.4rem; }
 fieldset.game, .game-fields { display: flex; flex-direction: column; gap: 0.6rem; }
 fieldset.game { border: 1px solid #ddd; border-radius: 8px; padding: 0.6rem 0.9rem 0.9rem; margin: 0; }
 .game-fields[hidden] { display: none; }
+.reply-line { margin: 0.4rem 0 0; color: #8a4a42; white-space: pre-line; overflow-wrap: anywhere; }
+.reply-line .hint { display: inline; }
+ul.meetings li { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+form.meeting { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+form.meeting input[name=meet_place] { flex: 1 1 10rem; }
 `;
 
 // Shrinks a chosen photo in the browser before upload (also drops EXIF such as location).
@@ -303,6 +308,36 @@ export interface AdminPageData {
   csrf: string;
   flash?: string;
   error?: string;
+  meetings?: Meeting[];
+  /** The meeting fields as typed, after a rejected add. */
+  meetingDraft?: MeetingDraft;
+  replies?: Reply[];
+}
+
+function formatStamp(at: string): string {
+  return new Date(at).toLocaleString(LOCALE, {
+    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Copenhagen',
+  });
+}
+
+function replyLine(reply: Reply | undefined): string {
+  return reply ? `<p class="reply-line">${replySummary(reply)} <span class="hint">${escapeHtml(formatStamp(reply.at))}</span></p>` : '';
+}
+
+function meetingsSection(base: string, csrf: string, meetings: Meeting[], draft: MeetingDraft): string {
+  const rows = meetings.map((m) => `<li><span>${formatDate(m.date)} · ${escapeHtml(m.place)}</span>
+    <span class="actions"><form method="post" action="${escapeHtml(`${base}/admin/meeting/delete`)}" onsubmit="return confirm('Remove this meeting?')">
+      ${csrf}<input type="hidden" name="date" value="${escapeHtml(m.date)}"><button type="submit">Remove</button>
+    </form></span></li>`).join('\n');
+  return `<h2>Meetings</h2>
+<p class="hint">The sky on her page fills with a star for every note until the next meeting.</p>
+<ul class="meetings">${rows || '<li>No meetings yet.</li>'}</ul>
+<form class="meeting" method="post" action="${escapeHtml(`${base}/admin/meeting/save`)}">
+  ${csrf}
+  <input type="date" name="meet_date" value="${escapeHtml(draft.date)}" required aria-label="Meeting date">
+  <input name="meet_place" maxlength="${MEETING_PLACE_MAX}" value="${escapeHtml(draft.place)}" placeholder="Place" required aria-label="Place">
+  <button type="submit">Add meeting</button>
+</form>`;
 }
 
 export function adminPage(d: AdminPageData): string {
@@ -322,6 +357,7 @@ export function adminPage(d: AdminPageData): string {
   </div>
   ${n.photo ? `<img class="thumb" src="${escapeHtml(`${mediaBase}/${n.photo.key}`)}" alt="" loading="lazy">` : ''}
   <p class="text">${escapeHtml(n.text)}</p>
+  ${replyLine(d.replies?.find((r) => r.date === n.date))}
 </li>`).join('\n');
 
   const currentPhoto = d.form.photo
@@ -337,6 +373,7 @@ ${d.flash ? `<p class="flash">${escapeHtml(d.flash)}</p>` : ''}
 ${errorLine(d.error)}
 <h2>Showing today (${formatDate(d.today)})</h2>
 <div class="box">${d.current ? escapeHtml(d.current.text) : 'Nothing yet.'}</div>
+${meetingsSection(d.base, csrf, d.meetings ?? [], d.meetingDraft ?? EMPTY_MEETING)}
 <h2>Write a note</h2>
 <form class="write" method="post" enctype="multipart/form-data" action="${escapeHtml(`${d.base}/admin/save`)}">
   ${csrf}

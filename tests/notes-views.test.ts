@@ -268,3 +268,36 @@ describe('replies on the reader page', () => {
     expect(readerPage({ mediaBase: '/m', current: today, archive: [] })).toMatch(/\.reply-sent \{[^}]*overflow-wrap: anywhere/);
   });
 });
+
+describe('admin meetings and replies', () => {
+  const base = {
+    base: '/for-you', today: '2026-10-01', current: null,
+    notes: [{ date: '2026-10-01', text: 'today' }, { date: '2026-09-30', text: 'before' }],
+    form: { date: '2026-10-02', text: '' }, csrf: 'tok123',
+  };
+
+  it('lists meetings with a remove button and has an add form', () => {
+    const html = adminPage({ ...base, meetings: [{ date: '2026-10-21', place: 'Some<where>' }] });
+    expect(html).toContain('<h2>Meetings</h2>');
+    expect(html).toContain('Some&lt;where&gt;');
+    expect(html).toContain('action="/for-you/admin/meeting/delete"');
+    expect(html).toContain('<input type="hidden" name="date" value="2026-10-21">');
+    expect(html).toContain('action="/for-you/admin/meeting/save"');
+    expect(html).toContain('name="meet_place" maxlength="40"');
+  });
+
+  it('says when there are no meetings and keeps a typed draft', () => {
+    const html = adminPage({ ...base, meetings: [], meetingDraft: { date: '2026-13-01', place: 'typed' } });
+    expect(html).toContain('No meetings yet.');
+    expect(html).toContain('name="meet_date" value="2026-13-01"');
+    expect(html).toContain('name="meet_place" maxlength="40" value="typed"');
+  });
+
+  it('shows her reply under its note, escaped, with when she sent it', () => {
+    const html = adminPage({ ...base, replies: [{ date: '2026-09-30', heart: true, text: '<3 you', at: '2026-10-01T06:05:00.000Z' }] });
+    expect(html).toContain('<p class="reply-line">♥ “&lt;3 you”');
+    expect(html).toContain('1 Oct, 08:05');
+    expect(html.indexOf('class="reply-line"')).toBeGreaterThan(html.indexOf('before</p>'));
+    expect(html.match(/class="reply-line"/g)).toHaveLength(1);
+  });
+});
