@@ -3,6 +3,7 @@ import {
   escapeHtml, formatDate, readerLoginPage, readerPage, errorPage, adminLoginPage, adminPage,
 } from '../worker/views';
 import { GAME_SCRIPT } from '../worker/game-script';
+import type { Sky } from '../worker/meetings';
 
 const ROBOTS = '<meta name="robots" content="noindex, nofollow">';
 const admin = adminPage({
@@ -200,5 +201,22 @@ describe('game on the reader page', () => {
   it('marks preview pages so the game always plays and remembers nothing', () => {
     const page = readerPage({ mediaBase: '/m', current: { date: '2026-10-10', text: 'hi', game: GAME }, archive: [], preview: true });
     expect(page).toContain('data-date="2026-10-10" data-preview>');
+  });
+});
+
+describe('sky on the reader page', () => {
+  const sky: Sky = { state: 'growing', place: 'Somewhere', date: '2026-10-21', stars: ['2026-10-01'], sleeps: 20 };
+
+  it('shows the sky above the note when there is one', () => {
+    const html = readerPage({ mediaBase: '/m', current: { date: '2026-10-01', text: 'hi' }, archive: [], sky });
+    expect(html).toContain('class="sky sky-growing"');
+    expect(html.indexOf('class="sky ')).toBeLessThan(html.indexOf('hi</p>'));
+    expect(html).toContain('@keyframes gather');
+  });
+
+  it('leaves the page unchanged without a sky', () => {
+    const html = readerPage({ mediaBase: '/m', current: { date: '2026-10-01', text: 'hi' }, archive: [] });
+    expect(html).not.toContain('class="sky');
+    expect(html).not.toContain('@keyframes gather');
   });
 });

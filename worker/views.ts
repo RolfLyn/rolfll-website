@@ -1,18 +1,14 @@
 import { GAME_LIMITS, type Note } from './notes';
 import { EMPTY_DRAFT, type GameDraft } from './game';
 import { GAME_SCRIPT, GAME_STYLE } from './game-script';
+import { escapeHtml } from './html';
+import { skyMarkup, SKY_STYLE } from './sky';
+import type { Sky } from './meetings';
+
+export { escapeHtml };
 
 const LOCALE = 'en-GB';
 const ROBOTS = '<meta name="robots" content="noindex, nofollow">';
-
-export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 
 export function formatDate(date: string): string {
   return new Date(`${date}T12:00:00Z`).toLocaleDateString(LOCALE, {
@@ -196,8 +192,8 @@ function gameData(note: Note, preview: boolean): string {
   return `<script type="application/json" class="game-data" data-date="${escapeHtml(note.date)}"${preview ? ' data-preview' : ''}>${json}</script>`;
 }
 
-export function readerPage({ current, archive, mediaBase, preview = false }: {
-  current: Note | null; archive: Note[]; mediaBase: string; preview?: boolean;
+export function readerPage({ current, archive, mediaBase, preview = false, sky = null }: {
+  current: Note | null; archive: Note[]; mediaBase: string; preview?: boolean; sky?: Sky | null;
 }): string {
   const body = current
     ? `<p class="date">${formatDate(current.date)}</p>
@@ -220,7 +216,8 @@ ${archive.map((n) => `<article${n.game ? ` data-game="${escapeHtml(n.date)}"` : 
   const game = games.length
     ? `\n${games.map((n) => gameData(n, preview)).join('\n')}\n<style>${GAME_STYLE}</style>\n${GAME_SCRIPT}`
     : '';
-  return readerShell(today + past + game);
+  const top = sky ? `<style>${SKY_STYLE}</style>\n${skyMarkup(sky)}\n` : '';
+  return readerShell(top + today + past + game);
 }
 
 export function errorPage(message: string): string {
