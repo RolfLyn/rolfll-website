@@ -4,6 +4,7 @@ import {
 } from '../worker/views';
 import { GAME_SCRIPT } from '../worker/game-script';
 import type { Sky } from '../worker/meetings';
+import type { Reply } from '../worker/replies';
 
 const ROBOTS = '<meta name="robots" content="noindex, nofollow">';
 const admin = adminPage({
@@ -218,5 +219,52 @@ describe('sky on the reader page', () => {
     const html = readerPage({ mediaBase: '/m', current: { date: '2026-10-01', text: 'hi' }, archive: [] });
     expect(html).not.toContain('class="sky');
     expect(html).not.toContain('@keyframes gather');
+  });
+});
+
+describe('replies on the reader page', () => {
+  const today = { date: '2026-10-01', text: 'hi' };
+  const older = { date: '2026-09-30', text: 'yo' };
+  const form = { action: '/for-you/reply', csrf: 'tok' };
+  const sent: Reply = { date: '2026-09-30', heart: true, text: 'miss <you>', at: '2026-10-01T08:00:00.000Z' };
+
+  it('adds a reply area under every note, with the reader csrf and the note date', () => {
+    const html = readerPage({ mediaBase: '/m', current: today, archive: [older], replies: [], reply: form });
+    expect(html).toContain('id="note-2026-10-01"');
+    expect(html).toContain('id="note-2026-09-30"');
+    expect(html.match(/<form class="reply-form" method="post" action="\/for-you\/reply">/g)).toHaveLength(2);
+    expect(html).toContain('<input type="hidden" name="csrf" value="tok">');
+    expect(html).toContain('<input type="hidden" name="date" value="2026-09-30">');
+    expect(html).toContain('maxlength="280"');
+    expect(html).toContain("event.target.form.submit()");
+  });
+
+  it('shows and prefills an existing reply, escaped', () => {
+    const html = readerPage({ mediaBase: '/m', current: today, archive: [older], replies: [sent], reply: form });
+    expect(html).toContain('<p class="reply-sent">You sent ♥ “miss &lt;you&gt;”</p>');
+    expect(html).toContain('>miss &lt;you&gt;</textarea>');
+    expect(html.match(/name="heart" value="on" checked/g)).toHaveLength(1);
+  });
+
+  it('shows the gentle error only under the note that did not send', () => {
+    const html = readerPage({ mediaBase: '/m', current: today, archive: [older], replies: [], reply: form, unsent: '2026-09-30' });
+    expect(html.match(/That didn&#39;t send\. Try again\?/g)).toHaveLength(1);
+    expect(html.indexOf("That didn&#39;t send")).toBeGreaterThan(html.indexOf('id="note-2026-09-30"'));
+  });
+
+  it('disables the reply area in preview and has no script', () => {
+    const html = readerPage({ mediaBase: '/m', current: today, archive: [], replies: [], reply: form, preview: true });
+    expect(html).toContain('<fieldset disabled>');
+    expect(html).not.toContain('action="/for-you/reply"');
+    expect(html).not.toContain('event.target.form.submit()');
+  });
+
+  it('has no reply area when replies are unavailable', () => {
+    const html = readerPage({ mediaBase: '/m', current: today, archive: [older], reply: form });
+    expect(html).not.toContain('class="reply');
+  });
+
+  it('wraps long unbroken replies instead of widening the page', () => {
+    expect(readerPage({ mediaBase: '/m', current: today, archive: [] })).toMatch(/\.reply-sent \{[^}]*overflow-wrap: anywhere/);
   });
 });

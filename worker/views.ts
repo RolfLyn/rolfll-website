@@ -4,6 +4,7 @@ import { GAME_SCRIPT, GAME_STYLE } from './game-script';
 import { escapeHtml } from './html';
 import { skyMarkup, SKY_STYLE } from './sky';
 import type { Sky } from './meetings';
+import type { Reply } from './replies';
 
 export { escapeHtml };
 
@@ -39,6 +40,22 @@ button { font: inherit; font-size: 1.15rem; padding: 0.55rem 1rem; border: 0; bo
 .error { color: var(--accent); font-style: italic; margin: 0; }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .message, .photo { animation: none; } }
+.reply { margin: 1.25rem 0 0; }
+.reply-form { display: block; max-width: none; }
+.reply-form fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1.1rem; }
+.reply-form fieldset:disabled { opacity: 0.6; }
+.reply-heart { position: relative; display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; color: var(--muted); font-style: italic; font-size: 1rem; }
+.reply-heart input { position: absolute; opacity: 0; width: 1px; height: 1px; padding: 0; pointer-events: none; }
+.reply-heart .glyph { font-size: 1.6rem; line-height: 1; color: var(--line); transition: color 0.3s, transform 0.3s; }
+.reply-heart input:checked + .glyph { color: var(--accent); transform: scale(1.15); }
+.reply-heart input:focus-visible + .glyph { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.reply details { flex: 1 1 auto; }
+.reply summary { cursor: pointer; color: var(--muted); font-style: italic; list-style: none; }
+.reply summary::-webkit-details-marker { display: none; }
+.reply textarea { display: block; width: 100%; margin: 0.6rem 0; font: inherit; font-size: 1.15rem; padding: 0.6rem 0.8rem; border: 1px solid var(--line); border-radius: 0.5rem; background: #fffaf2; color: var(--ink); resize: vertical; }
+.reply-send { font-size: 1rem; padding: 0.3rem 0.8rem; }
+.reply-sent { margin: 0 0 0.5rem; color: var(--muted); font-style: italic; white-space: pre-line; overflow-wrap: anywhere; }
+.reply .error { margin-top: 0.5rem; }
 `;
 
 const ADMIN_STYLE = `
@@ -175,6 +192,40 @@ function soundTag(note: Note, mediaBase: string, lazy: boolean): string {
   return `<audio class="sound" controls preload="${lazy ? 'none' : 'metadata'}" src="${escapeHtml(`${mediaBase}/${note.audio.key}`)}"></audio>`;
 }
 
+export interface ReplyForm {
+  action: string;
+  csrf: string;
+}
+
+/** "♥ “her words”", escaped, for the reader and the admin. */
+export function replySummary(reply: Reply): string {
+  return [reply.heart ? '♥' : '', reply.text ? `“${escapeHtml(reply.text)}”` : ''].filter(Boolean).join(' ');
+}
+
+// Tapping the heart sends it straight away; without JavaScript the Send buttons do it.
+const REPLY_SCRIPT = `<script>
+(function () {
+  var boxes = document.querySelectorAll('.reply-form input[name=heart]');
+  for (var i = 0; i < boxes.length; i++) {
+    boxes[i].addEventListener('change', function (event) { event.target.form.submit(); });
+  }
+})();
+</script>`;
+
+function replyArea(date: string, reply: Reply | undefined, form: ReplyForm | undefined, unsent: boolean): string {
+  const sent = reply ? `<p class="reply-sent">You sent ${replySummary(reply)}</p>\n` : '';
+  return `<div class="reply" id="note-${escapeHtml(date)}">
+${sent}<form class="reply-form" method="post"${form ? ` action="${escapeHtml(form.action)}"` : ''}><fieldset${form ? '' : ' disabled'}>
+<input type="hidden" name="csrf" value="${form ? escapeHtml(form.csrf) : ''}"><input type="hidden" name="date" value="${escapeHtml(date)}">
+<label class="reply-heart"><input type="checkbox" name="heart" value="on"${reply?.heart ? ' checked' : ''}><span class="glyph" aria-hidden="true">♥</span>Send a heart</label>
+<noscript><button type="submit" class="reply-send">Send</button></noscript>
+<details><summary>Write something back</summary>
+<textarea name="text" maxlength="280" rows="3" aria-label="Write something back">${escapeHtml(reply?.text ?? '')}</textarea>
+<button type="submit">Send</button></details>
+</fieldset></form>
+${unsent ? `<p class="error">${escapeHtml("That didn't send. Try again?")}</p>\n` : ''}</div>`;
+}
+
 export function readerLoginPage({ action, error }: { action: string; error?: string }): string {
   return readerShell(`
 <p class="quiet">This little corner is just for you.</p>
@@ -192,14 +243,18 @@ function gameData(note: Note, preview: boolean): string {
   return `<script type="application/json" class="game-data" data-date="${escapeHtml(note.date)}"${preview ? ' data-preview' : ''}>${json}</script>`;
 }
 
-export function readerPage({ current, archive, mediaBase, preview = false, sky = null }: {
+export function readerPage({ current, archive, mediaBase, preview = false, sky = null, replies = null, reply, unsent }: {
   current: Note | null; archive: Note[]; mediaBase: string; preview?: boolean; sky?: Sky | null;
+  replies?: Reply[] | null; reply?: ReplyForm; unsent?: string;
 }): string {
+  const form = preview ? undefined : reply;
+  const area = (n: Note) => (replies ? replyArea(n.date, replies.find((r) => r.date === n.date), form, unsent === n.date) : '');
   const body = current
     ? `<p class="date">${formatDate(current.date)}</p>
 <p class="message">${escapeHtml(current.text)}</p>
 ${photoTag(current, mediaBase, false)}
-${soundTag(current, mediaBase, false)}`
+${soundTag(current, mediaBase, false)}
+${area(current)}`
     : '';
   const today = !current
     ? '<p class="quiet">Nothing here yet. Check back soon.</p>'
@@ -209,15 +264,16 @@ ${soundTag(current, mediaBase, false)}`
   const past = archive.length
     ? `<div class="heart" aria-hidden="true">&#9825;</div>
 <section class="archive"><h2>Earlier notes</h2>
-${archive.map((n) => `<article${n.game ? ` data-game="${escapeHtml(n.date)}"` : ''}><p class="date">${formatDate(n.date)}</p><p class="text">${escapeHtml(n.text)}</p>${photoTag(n, mediaBase, true)}${soundTag(n, mediaBase, true)}</article>`).join('\n')}
+${archive.map((n) => `<article${n.game ? ` data-game="${escapeHtml(n.date)}"` : ''}><p class="date">${formatDate(n.date)}</p><p class="text">${escapeHtml(n.text)}</p>${photoTag(n, mediaBase, true)}${soundTag(n, mediaBase, true)}${area(n)}</article>`).join('\n')}
 </section>`
     : '';
   const games = [current, ...archive].filter((n): n is Note => Boolean(n?.game));
   const game = games.length
     ? `\n${games.map((n) => gameData(n, preview)).join('\n')}\n<style>${GAME_STYLE}</style>\n${GAME_SCRIPT}`
     : '';
+  const replyScript = replies && form && (current || archive.length) ? `\n${REPLY_SCRIPT}` : '';
   const top = sky ? `<style>${SKY_STYLE}</style>\n${skyMarkup(sky)}\n` : '';
-  return readerShell(top + today + past + game);
+  return readerShell(top + today + past + game + replyScript);
 }
 
 export function errorPage(message: string): string {
