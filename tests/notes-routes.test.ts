@@ -698,3 +698,16 @@ describe('meetings and the sky', () => {
     expect(kv.data.get('meetings')).toBe('garbage');
   });
 });
+
+describe('replies are only written when a change touches one', () => {
+  it('saving, moving and deleting notes without replies leaves the replies key alone', async () => {
+    const { env, kv } = setup();
+    seed(kv, [{ date: '2026-10-01', text: 'today' }, { date: '2026-09-30', text: 'older' }]);
+    kv.data.set('replies', JSON.stringify([{ date: '2026-10-01', heart: true, text: '', at: NOW.toISOString() }]));
+    const { save, csrf, cookie } = await adminWith(env);
+    await save({ date: '2026-10-05', text: 'new' });
+    await save({ original: '2026-09-30', date: '2026-09-28', text: 'moved' });
+    await handleRequest(postForm('/for-you/admin/delete', { csrf, date: '2026-09-28' }, cookie), env, NOW);
+    expect(kv.puts.filter((p) => p.key === 'replies')).toEqual([]);
+  });
+});

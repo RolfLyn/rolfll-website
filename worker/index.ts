@@ -91,11 +91,16 @@ async function tryLoad<T>(load: () => Promise<T>, what: string): Promise<T | nul
 
 // Keeps replies with their notes. Best-effort: the notes are already saved when this runs,
 // and a missing or unreadable replies value is left exactly as it is.
+// Writes only when a reply actually changes: KV reads can be a minute stale across locations,
+// so an unneeded write could undo a reply she has just sent.
 async function updateReplies(kv: KV, change: (replies: Reply[]) => Reply[]): Promise<void> {
   try {
     const raw = await kv.get(REPLIES_KEY);
     if (raw === null) return;
-    await kv.put(REPLIES_KEY, JSON.stringify(change(parseReplies(raw))));
+    const before = parseReplies(raw);
+    const after = change(before);
+    if (JSON.stringify(after) === JSON.stringify(before)) return;
+    await kv.put(REPLIES_KEY, JSON.stringify(after));
   } catch (error) {
     console.error('Could not update replies', error);
   }
