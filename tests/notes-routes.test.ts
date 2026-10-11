@@ -532,3 +532,169 @@ describe('game', () => {
     expect(asReader).not.toContain('soon');
   });
 });
+
+async function readerCsrf(env: Env, cookie: string): Promise<string> {
+  const html = await (await handleRequest(get('/for-you', cookie), env, NOW)).text();
+  return html.match(/name="csrf" value="([^"]+)"/)![1];
+}
+
+const replies = (kv: ReturnType<typeof memoryKV>) => JSON.parse(kv.data.get('replies') ?? '[]');
+
+describe('replies', () => {
+  async function reader() {
+    const { env, kv } = setup();
+    seed(kv, [{ date: '2026-10-02', text: 'future' }, { date: '2026-10-01', text: 'today' }, { date: '2026-09-30', text: 'older' }]);
+    const cookie = await login(env, 'reader');
+    const csrf = await readerCsrf(env, cookie);
+    const reply = (fields: Record<string, string>, c = cookie) => handleRequest(post('/for-you/reply', { csrf, ...fields }, c), env, NOW);
+    return { env, kv, cookie, csrf, reply };
+  }
+
+  it('saves a heart and a line, shows it back, and returns to the note', async () => {
+    const { env, kv, cookie, reply } = await reader();
+    const res = await reply({ date: '2026-09-30', heart: 'on', text: '  miss you\r\n ' });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('Location')).toBe('/for-you#note-2026-09-30');
+    expect(replies(kv)).toEqual([{ date: '2026-09-30', heart: true, text: 'miss you', at: NOW.toISOString() }]);
+    const html = await (await handleRequest(get('/for-you', cookie), env, NOW)).text();
+    expect(html).toContain('You sent ♥ “miss you”');
+  });
+
+  it('updates and clears a reply', async () => {
+    const { kv, reply } = await reader();
+    await reply({ date: '2026-10-01', heart: 'on' });
+    await reply({ date: '2026-10-01', text: 'only words' });
+    expect(replies(kv)).toEqual([{ date: '2026-10-01', heart: false, text: 'only words', at: NOW.toISOString() }]);
+    await reply({ date: '2026-10-01' });
+    expect(replies(kv)).toEqual([]);
+  });
+
+  it('sends a too-long reply back with a gentle error and stores nothing', async () => {
+    const { env, kv, cookie, reply } = await reader();
+    const res = await reply({ date: '2026-10-01', text: 'x'.repeat(281) });
+    expect(res.headers.get('Location')).toBe('/for-you?unsent=2026-10-01#note-2026-10-01');
+    expect(kv.data.has('replies')).toBe(false);
+    const html = await (await handleRequest(get('/for-you?unsent=2026-10-01', cookie), env, NOW)).text();
+    expect(html).toContain('That didn&#39;t send. Try again?');
+  });
+
+  it('refuses replies without the reader session, with a bad token, or to unseen notes', async () => {
+    const { env, kv, reply } = await reader();
+    expect((await handleRequest(post('/for-you/reply', { date: '2026-10-01', heart: 'on' }), env, NOW)).status).toBe(303);
+    expect((await reply({ date: '2026-10-01', heart: 'on', csrf: 'nope' })).status).toBe(403);
+    const admin = await login(env, 'admin');
+    expect((await reply({ date: '2026-10-01', heart: 'on' }, admin)).status).toBe(303);
+    expect((await reply({ date: '2026-10-02', heart: 'on' })).status).toBe(404);
+    expect((await reply({ date: '2026-09-01', heart: 'on' })).status).toBe(404);
+    expect(kv.data.has('replies')).toBe(false);
+  });
+
+  it('a corrupt replies value never breaks the page and is never overwritten', async () => {
+    const { env, kv, cookie, reply } = await reader();
+    kv.data.set('replies', 'garbage');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await handleRequest(get('/for-you', cookie), env, NOW);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('today');
+    expect(html).not.toContain('class="reply');
+    expect((await reply({ date: '2026-10-01', heart: 'on' })).status).toBe(500);
+    const admin = await login(env, 'admin');
+    expect(await (await handleRequest(get('/for-you/admin', admin), env, NOW)).text()).toContain('Replies could not be read.');
+    expect(kv.data.get('replies')).toBe('garbage');
+  });
+
+  it('deleting a note deletes its reply; moving a note moves it; a new note on its date drops it', async () => {
+    const { env, kv, reply } = await reader();
+    await reply({ date: '2026-09-30', heart: 'on' });
+    await reply({ date: '2026-10-01', text: 'b' });
+    const { save, csrf, cookie } = await adminWith(env);
+    await save({ original: '2026-09-30', date: '2026-09-28', text: 'older' });
+    expect(replies(kv).map((r: { date: string }) => r.date).sort()).toEqual(['2026-09-28', '2026-10-01']);
+    await save({ date: '2026-10-01', text: 'fresh note' });
+    expect(replies(kv).map((r: { date: string }) => r.date)).toEqual(['2026-09-28']);
+    await handleRequest(postForm('/for-you/admin/delete', { csrf, date: '2026-09-28' }, cookie), env, NOW);
+    expect(replies(kv)).toEqual([]);
+  });
+
+  it('a text-only edit keeps the reply, and saving notes never creates or overwrites the replies key', async () => {
+    const { env, kv, reply } = await reader();
+    const { save } = await adminWith(env);
+    await save({ date: '2026-10-05', text: 'new' });
+    expect(kv.data.has('replies')).toBe(false);
+    await reply({ date: '2026-10-01', heart: 'on' });
+    await save({ original: '2026-10-01', date: '2026-10-01', text: 'edited' });
+    expect(replies(kv)).toHaveLength(1);
+    kv.data.set('replies', 'garbage');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect((await save({ original: '2026-10-01', date: '2026-10-03', text: 'moved' })).status).toBe(303);
+    expect(kv.data.get('replies')).toBe('garbage');
+  });
+
+  it('shows her reply in admin, and preview shows it with the form turned off', async () => {
+    const { env, reply } = await reader();
+    await reply({ date: '2026-10-01', heart: 'on', text: 'hi' });
+    const admin = await login(env, 'admin');
+    expect(await (await handleRequest(get('/for-you/admin', admin), env, NOW)).text()).toContain('<p class="reply-line">♥ “hi”');
+    const preview = await (await handleRequest(get('/for-you/admin/preview?date=2026-10-01', admin), env, NOW)).text();
+    expect(preview).toContain('You sent ♥ “hi”');
+    expect(preview).toContain('<fieldset disabled>');
+  });
+});
+
+describe('meetings and the sky', () => {
+  it('adds, replaces and removes meetings, and the reader sees the sky', async () => {
+    const { env, kv } = setup();
+    seed(kv, [{ date: '2026-10-01', text: 'today' }, { date: '2026-09-30', text: 'older' }]);
+    const { csrf, cookie } = await adminWith(env);
+    const meet = (path: string, fields: Record<string, string>) =>
+      handleRequest(postForm(`/for-you/admin/meeting/${path}`, { csrf, ...fields }, cookie), env, NOW);
+    expect((await meet('save', { meet_date: '2026-10-21', meet_place: 'Nowhere' })).headers.get('Location')).toBe('/for-you/admin?msg=meeting-saved');
+    await meet('save', { meet_date: '2026-10-21', meet_place: 'Somewhere' });
+    expect(JSON.parse(kv.data.get('meetings')!)).toEqual([{ date: '2026-10-21', place: 'Somewhere' }]);
+    const html = await (await handleRequest(get('/for-you', await login(env, 'reader')), env, NOW)).text();
+    expect(html).toContain('A star for every note · Somewhere in 20 sleeps');
+    expect(html.match(/<circle /g)).toHaveLength(2);
+    expect((await meet('delete', { date: '2026-10-21' })).headers.get('Location')).toBe('/for-you/admin?msg=meeting-removed');
+    expect(JSON.parse(kv.data.get('meetings')!)).toEqual([]);
+  });
+
+  it('rejects a bad meeting, keeps what was typed, and stores nothing', async () => {
+    const { env, kv } = setup();
+    const { csrf, cookie } = await adminWith(env);
+    const res = await handleRequest(postForm('/for-you/admin/meeting/save', { csrf, meet_date: '2026-10-21', meet_place: '' }, cookie), env, NOW);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('A meeting needs a real date');
+    expect(kv.data.has('meetings')).toBe(false);
+  });
+
+  it('refuses meeting changes without admin or a valid token', async () => {
+    const { env, kv } = setup();
+    const reader = await login(env, 'reader');
+    expect((await handleRequest(postForm('/for-you/admin/meeting/save', { meet_date: '2026-10-21', meet_place: 'x' }, reader), env, NOW)).status).toBe(303);
+    const { cookie } = await adminWith(env);
+    expect((await handleRequest(postForm('/for-you/admin/meeting/save', { csrf: 'nope', meet_date: '2026-10-21', meet_place: 'x' }, cookie), env, NOW)).status).toBe(403);
+    expect(kv.data.has('meetings')).toBe(false);
+  });
+
+  it('previews the arrival heart on the meeting date', async () => {
+    const { env, kv } = setup();
+    seed(kv, [{ date: '2026-10-21', text: 'here' }, { date: '2026-10-01', text: 'today' }]);
+    kv.data.set('meetings', JSON.stringify([{ date: '2026-10-21', place: 'Somewhere' }]));
+    const admin = await login(env, 'admin');
+    const html = await (await handleRequest(get('/for-you/admin/preview?date=2026-10-21', admin), env, NOW)).text();
+    expect(html).toContain('sky-arrived');
+    expect(html).toContain("0 km · You&#39;re here ♥");
+  });
+
+  it('a corrupt meetings value hides the sky but keeps the notes', async () => {
+    const { env, kv } = setup();
+    seed(kv, [{ date: '2026-10-01', text: 'today' }]);
+    kv.data.set('meetings', 'garbage');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const html = await (await handleRequest(get('/for-you', await login(env, 'reader')), env, NOW)).text();
+    expect(html).toContain('today');
+    expect(html).not.toContain('class="sky');
+    expect(kv.data.get('meetings')).toBe('garbage');
+  });
+});

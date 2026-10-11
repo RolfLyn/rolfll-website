@@ -9,6 +9,8 @@ import {
 } from './auth';
 import { checkFile, newKey, serveMedia, type MediaKind } from './media';
 import { gameToDraft, parseGameForm, type GameDraft } from './game';
+import { parseMeetings, upsertMeeting, removeMeeting, parseMeetingForm, skyFor, type MeetingDraft } from './meetings';
+import { parseReplies, parseReplyForm, setReply, moveReply, dropReply, type Reply } from './replies';
 import { readerLoginPage, readerPage, errorPage, adminLoginPage, adminPage } from './views';
 import type { Env, KV, R2 } from './types';
 
@@ -17,7 +19,12 @@ const TRASH_KEY = 'trash';
 const TRASH_GRACE_MS = 86_400_000;
 const MAX_LENGTH = 5000;
 const COOKIE: Record<Role, string> = { reader: 'notes_reader', admin: 'notes_admin' };
-const FLASH: Record<string, string> = { saved: 'Saved.', deleted: 'Deleted.' };
+const MEETINGS_KEY = 'meetings';
+const REPLIES_KEY = 'replies';
+const FLASH: Record<string, string> = {
+  saved: 'Saved.', deleted: 'Deleted.', 'meeting-saved': 'Meeting saved.', 'meeting-removed': 'Meeting removed.',
+};
+const EXPIRED = 'That form expired. Go back, reload, and try again.';
 const INVALID = `Needs a real date and a message of at most ${MAX_LENGTH} characters.`;
 const MEDIA_ROUTE = /^(\/admin)?\/media\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{2,4})$/;
 
@@ -62,6 +69,36 @@ async function loadNotes(kv: KV): Promise<Note[]> {
 
 async function storeNotes(kv: KV, notes: Note[]): Promise<void> {
   await kv.put(NOTES_KEY, JSON.stringify(notes));
+}
+
+async function loadMeetings(kv: KV) {
+  return parseMeetings(await kv.get(MEETINGS_KEY));
+}
+
+async function loadReplies(kv: KV): Promise<Reply[]> {
+  return parseReplies(await kv.get(REPLIES_KEY));
+}
+
+// Pages show the notes even when an extra (meetings, replies) cannot be read; that part is left out.
+async function tryLoad<T>(load: () => Promise<T>, what: string): Promise<T | null> {
+  try {
+    return await load();
+  } catch (error) {
+    console.error(`Could not read ${what}`, error);
+    return null;
+  }
+}
+
+// Keeps replies with their notes. Best-effort: the notes are already saved when this runs,
+// and a missing or unreadable replies value is left exactly as it is.
+async function updateReplies(kv: KV, change: (replies: Reply[]) => Reply[]): Promise<void> {
+  try {
+    const raw = await kv.get(REPLIES_KEY);
+    if (raw === null) return;
+    await kv.put(REPLIES_KEY, JSON.stringify(change(parseReplies(raw))));
+  } catch (error) {
+    console.error('Could not update replies', error);
+  }
 }
 
 async function readForm(request: Request): Promise<FormData> {
@@ -148,16 +185,39 @@ async function handleLogin(request: Request, kv: KV, cfg: Config, now: Date, rol
   return redirect(home, { 'Set-Cookie': sessionCookie(COOKIE[role], session, home) });
 }
 
-async function readerSession(request: Request, cfg: Config, now: Date): Promise<boolean> {
-  return verifySession(readCookie(request, COOKIE.reader), 'reader', cfg.secret, now.getTime());
+async function readerSession(request: Request, cfg: Config, now: Date): Promise<string | null> {
+  const session = readCookie(request, COOKIE.reader);
+  return session && (await verifySession(session, 'reader', cfg.secret, now.getTime())) ? session : null;
 }
 
-async function showReader(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
-  if (!(await readerSession(request, cfg, now))) {
-    return html(readerLoginPage({ action: `${cfg.base}/login` }));
-  }
-  const view = selectForReader(await loadNotes(kv), todayInCopenhagen(now));
-  return html(readerPage({ ...view, mediaBase: `${cfg.base}/media` }));
+async function showReader(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
+  const session = await readerSession(request, cfg, now);
+  if (!session) return html(readerLoginPage({ action: `${cfg.base}/login` }));
+  const today = todayInCopenhagen(now);
+  const notes = await loadNotes(kv);
+  const meetings = await tryLoad(() => loadMeetings(kv), 'meetings');
+  return html(readerPage({
+    ...selectForReader(notes, today),
+    mediaBase: `${cfg.base}/media`,
+    sky: meetings && skyFor(notes, meetings, today),
+    replies: await tryLoad(() => loadReplies(kv), 'replies'),
+    reply: { action: `${cfg.base}/reply`, csrf: await csrfToken(session, cfg.secret) },
+    unsent: url.searchParams.get('unsent') ?? undefined,
+  }));
+}
+
+async function handleReply(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
+  const session = await readerSession(request, cfg, now);
+  if (!session) return redirect(cfg.base);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  const date = field(form, 'date');
+  const today = todayInCopenhagen(now);
+  if (!(await loadNotes(kv)).some((n) => n.date === date && n.date <= today)) return notFound();
+  const answer = parseReplyForm((name) => field(form, name));
+  if (!answer) return redirect(`${cfg.base}?unsent=${date}#note-${date}`);
+  await kv.put(REPLIES_KEY, JSON.stringify(setReply(await loadReplies(kv), date, answer, now.toISOString())));
+  return redirect(`${cfg.base}#note-${date}`);
 }
 
 interface AdminView {
@@ -166,20 +226,32 @@ interface AdminView {
   flash?: string;
   error?: string;
   game?: GameDraft;
+  meetingDraft?: MeetingDraft;
 }
 
 async function renderAdmin(
-  notes: Note[], cfg: Config, now: Date, session: string, view: AdminView, status = 200,
+  kv: KV, notes: Note[], cfg: Config, now: Date, session: string, view: AdminView, status = 200,
 ): Promise<Response> {
   const today = todayInCopenhagen(now);
+  const meetings = await tryLoad(() => loadMeetings(kv), 'meetings');
+  const replies = await tryLoad(() => loadReplies(kv), 'replies');
+  const problems = [meetings ? '' : 'Meetings could not be read.', replies ? '' : 'Replies could not be read.'];
+  const error = [view.error ?? '', ...problems].filter(Boolean).join(' ') || undefined;
   return html(adminPage({
     base: cfg.base,
     today,
     current: selectForReader(notes, today).current,
     notes,
     ...view,
+    error,
+    meetings: meetings ?? [],
+    replies: replies ?? [],
     csrf: await csrfToken(session, cfg.secret),
   }), status);
+}
+
+function freshForm(notes: Note[], now: Date): Note {
+  return { date: nextEmptyDate(notes.map((n) => n.date), todayInCopenhagen(now)), text: '' };
 }
 
 async function adminSession(request: Request, cfg: Config, now: Date): Promise<string | null> {
@@ -192,23 +264,29 @@ async function showAdmin(request: Request, kv: KV, cfg: Config, now: Date, url: 
   if (!session) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
   const notes = await loadNotes(kv);
   const editing = notes.find((n) => n.date === url.searchParams.get('edit'));
-  const form = editing ?? { date: nextEmptyDate(notes.map((n) => n.date), todayInCopenhagen(now)), text: '' };
+  const form = editing ?? freshForm(notes, now);
   const msg = url.searchParams.get('msg') ?? '';
   const flash = Object.hasOwn(FLASH, msg) ? FLASH[msg] : undefined;
-  return renderAdmin(notes, cfg, now, session, { form, original: editing?.date, flash, game: gameToDraft(editing?.game) });
+  return renderAdmin(kv, notes, cfg, now, session, { form, original: editing?.date, flash, game: gameToDraft(editing?.game) });
 }
 
 async function showPreview(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
   if (!(await adminSession(request, cfg, now))) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
-  const note = (await loadNotes(kv)).find((n) => n.date === url.searchParams.get('date'));
+  const notes = await loadNotes(kv);
+  const note = notes.find((n) => n.date === url.searchParams.get('date'));
   if (!note) return notFound();
-  return html(readerPage({ current: note, archive: [], mediaBase: `${cfg.base}/admin/media`, preview: true }));
+  const meetings = await tryLoad(() => loadMeetings(kv), 'meetings');
+  return html(readerPage({
+    current: note, archive: [], mediaBase: `${cfg.base}/admin/media`, preview: true,
+    sky: meetings && skyFor(notes, meetings, note.date),
+    replies: await tryLoad(() => loadReplies(kv), 'replies'),
+  }));
 }
 
 async function showMedia(
   request: Request, env: Env, cfg: Config, now: Date, key: string, asAdmin: boolean,
 ): Promise<Response> {
-  const allowed = asAdmin ? Boolean(await adminSession(request, cfg, now)) : await readerSession(request, cfg, now);
+  const allowed = asAdmin ? Boolean(await adminSession(request, cfg, now)) : Boolean(await readerSession(request, cfg, now));
   if (!allowed) return notFound();
   const note = findByMediaKey(await loadNotes(env.NOTES), key);
   if (!note || (!asAdmin && note.date > todayInCopenhagen(now))) return notFound();
@@ -223,7 +301,7 @@ async function adminAction(
   if (!session) return redirect(adminHome);
   const form = await readForm(request);
   if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) {
-    return html(errorPage('That form expired. Go back, reload, and try again.'), 403);
+    return html(errorPage(EXPIRED), 403);
   }
   const notes = await loadNotes(env.NOTES);
   const date = field(form, 'date');
@@ -231,6 +309,7 @@ async function adminAction(
     const next = removeNote(notes, date);
     await storeNotes(env.NOTES, next);
     await retireOrphans(env, notes, next, now);
+    await updateReplies(env.NOTES, (r) => dropReply(r, date));
     return redirect(`${adminHome}?msg=deleted`);
   }
 
@@ -249,7 +328,7 @@ async function adminAction(
   if (audioCheck && !audioCheck.ok) errors.push(audioCheck.error);
   if (gameForm.error) errors.push(gameForm.error);
   if (errors.length > 0) {
-    return renderAdmin(notes, cfg, now, session, {
+    return renderAdmin(env.NOTES, notes, cfg, now, session, {
       form: { ...existing, date, text },
       original: original || undefined,
       error: errors.join(' '),
@@ -273,7 +352,30 @@ async function adminAction(
   const next = upsertNote(kept, note);
   await storeNotes(env.NOTES, next);
   await retireOrphans(env, notes, next, now);
+  if (original !== date) await updateReplies(env.NOTES, (r) => moveReply(r, original || undefined, date));
   return redirect(`${adminHome}?msg=saved`);
+}
+
+async function meetingAction(
+  request: Request, kv: KV, cfg: Config, now: Date, action: 'save' | 'delete',
+): Promise<Response> {
+  const adminHome = `${cfg.base}/admin`;
+  const session = await adminSession(request, cfg, now);
+  if (!session) return redirect(adminHome);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  const meetings = await loadMeetings(kv);
+  if (action === 'delete') {
+    await kv.put(MEETINGS_KEY, JSON.stringify(removeMeeting(meetings, field(form, 'date'))));
+    return redirect(`${adminHome}?msg=meeting-removed`);
+  }
+  const parsed = parseMeetingForm((name) => field(form, name));
+  if (!parsed.meeting) {
+    const notes = await loadNotes(kv);
+    return renderAdmin(kv, notes, cfg, now, session, { form: freshForm(notes, now), error: parsed.error, meetingDraft: parsed.draft }, 400);
+  }
+  await kv.put(MEETINGS_KEY, JSON.stringify(upsertMeeting(meetings, parsed.meeting)));
+  return redirect(`${adminHome}?msg=meeting-saved`);
 }
 
 export async function handleRequest(request: Request, env: Env, now: Date): Promise<Response> {
@@ -297,7 +399,10 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
     const media = MEDIA_ROUTE.exec(sub);
     if (media && method === 'GET') return await showMedia(request, env, cfg, now, media[2], media[1] === '/admin');
     switch (`${method} ${sub}`) {
-      case 'GET ': return await showReader(request, kv, cfg, now);
+      case 'GET ': return await showReader(request, kv, cfg, now, url);
+      case 'POST /reply': return await handleReply(request, kv, cfg, now);
+      case 'POST /admin/meeting/save': return await meetingAction(request, kv, cfg, now, 'save');
+      case 'POST /admin/meeting/delete': return await meetingAction(request, kv, cfg, now, 'delete');
       case 'POST /login': return await handleLogin(request, kv, cfg, now, 'reader');
       case 'GET /admin': return await showAdmin(request, kv, cfg, now, url);
       case 'GET /admin/preview': return await showPreview(request, kv, cfg, now, url);
