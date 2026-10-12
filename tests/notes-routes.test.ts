@@ -711,3 +711,186 @@ describe('replies are only written when a change touches one', () => {
     expect(kv.puts.filter((p) => p.key === 'replies')).toEqual([]);
   });
 });
+
+describe('after dark', () => {
+  const TEXT = 'A placeholder entry';
+
+  async function withEntry(extra: Record<string, string | File> = {}) {
+    const ctx = setup();
+    seed(ctx.kv, [{ date: '2026-10-01', text: 'today' }]);
+    const admin = await adminWith(ctx.env);
+    const saveEntry = (fields: Record<string, string | File>, when = NOW) =>
+      handleRequest(postForm('/for-you/admin/after-dark/save', { csrf: admin.csrf, ...fields }, admin.cookie), ctx.env, when);
+    const res = await saveEntry({ title: 'A title', text: TEXT, ...extra });
+    const entries = () => JSON.parse(ctx.kv.data.get('after_dark')!);
+    return { ...ctx, admin, res, entries, saveEntry };
+  }
+
+  async function comeIn(env: Env) {
+    const cookie = await login(env, 'reader');
+    const csrf = await readerCsrf(env, cookie);
+    const enter = await handleRequest(post('/for-you/after-dark/enter', { csrf }, cookie), env, NOW);
+    const door = enter.headers.get('Set-Cookie')!.split(';')[0];
+    return { cookie, csrf, enter, inside: `${cookie}; ${door}` };
+  }
+
+  it('shows the moon link only once there is an entry', async () => {
+    const { env, kv } = setup();
+    seed(kv, [{ date: '2026-10-01', text: 'today' }]);
+    const reader = await login(env, 'reader');
+    expect(await (await handleRequest(get('/for-you', reader), env, NOW)).text()).not.toContain('after dark</a>');
+    const w = await withEntry();
+    expect(w.res.status).toBe(303);
+    expect(w.res.headers.get('Location')).toBe('/for-you/admin/after-dark?msg=saved');
+    const html = await (await handleRequest(get('/for-you', await login(w.env, 'reader')), w.env, NOW)).text();
+    expect(html).toContain(`data-newest="${w.entries()[0].id}"`);
+  });
+
+  it('shows the doorway until she comes in, then the room for 30 minutes', async () => {
+    const { env } = await withEntry();
+    const { cookie, enter, inside } = await comeIn(env);
+    const door = await (await handleRequest(get('/for-you/after-dark', cookie), env, NOW)).text();
+    expect(door).toContain("This part is just for when you're alone.");
+    expect(door).not.toContain(TEXT);
+    expect(enter.status).toBe(303);
+    expect(enter.headers.get('Location')).toBe('/for-you/after-dark');
+    expect(enter.headers.get('Set-Cookie')).toContain('Max-Age=1800');
+    const room = await handleRequest(get('/for-you/after-dark', inside), env, NOW);
+    expect(room.headers.get('X-Robots-Tag')).toBe('noindex, nofollow');
+    expect(room.headers.get('Cache-Control')).toBe('no-store');
+    expect(await room.text()).toContain(TEXT);
+    const later = await (await handleRequest(get('/for-you/after-dark', inside), env, new Date(NOW.getTime() + 31 * 60_000))).text();
+    expect(later).toContain("This part is just for when you're alone.");
+  });
+
+  it('asks for the password when logged out, and refuses to open without a valid token or session', async () => {
+    const { env } = await withEntry();
+    const out = await (await handleRequest(get('/for-you/after-dark'), env, NOW)).text();
+    expect(out).toContain('name="password"');
+    expect(out).not.toContain(TEXT);
+    const noSession = await handleRequest(post('/for-you/after-dark/enter', { csrf: 'x' }), env, NOW);
+    expect(noSession.headers.get('Set-Cookie')).toBeNull();
+    const reader = await login(env, 'reader');
+    expect((await handleRequest(post('/for-you/after-dark/enter', { csrf: 'nope' }, reader), env, NOW)).status).toBe(403);
+  });
+
+  it('does not open for a different reader session', async () => {
+    const { env } = await withEntry();
+    const { inside } = await comeIn(env);
+    const door = inside.split('; ')[1];
+    const other = (await handleRequest(post('/for-you/login', { password: 'reader-pw' }), env, new Date(NOW.getTime() + 1000)))
+      .headers.get('Set-Cookie')!.split(';')[0];
+    const html = await (await handleRequest(get('/for-you/after-dark', `${other}; ${door}`), env, NOW)).text();
+    expect(html).toContain("This part is just for when you're alone.");
+  });
+
+  it('leave closes the door and goes back to the notes', async () => {
+    const { env } = await withEntry();
+    const { inside } = await comeIn(env);
+    const res = await handleRequest(post('/for-you/after-dark/leave', {}, inside), env, NOW);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('Location')).toBe('/for-you');
+    expect(res.headers.get('Set-Cookie')).toContain('notes_door=;');
+    expect(res.headers.get('Set-Cookie')).toContain('Max-Age=0');
+  });
+
+  it('saves her reply to an entry, and refuses it with the door closed or for an unknown entry', async () => {
+    const { env, kv, entries } = await withEntry();
+    const id = entries()[0].id;
+    const { cookie, csrf, inside } = await comeIn(env);
+    const reply = (fields: Record<string, string>, c = inside) => handleRequest(post('/for-you/after-dark/reply', { csrf, ...fields }, c), env, NOW);
+    const res = await reply({ id, heart: 'on', text: ' yes ' });
+    expect(res.headers.get('Location')).toBe(`/for-you/after-dark#entry-${id}`);
+    expect(JSON.parse(kv.data.get('after_dark_replies')!)).toEqual([{ id, heart: true, text: 'yes', at: NOW.toISOString() }]);
+    expect(await (await handleRequest(get('/for-you/after-dark', inside), env, NOW)).text()).toContain('You sent ♥ “yes”');
+    const closed = await reply({ id, heart: 'on', text: 'again' }, cookie);
+    expect(closed.headers.get('Location')).toBe('/for-you/after-dark');
+    expect((await reply({ id: '99999999-9999-4999-8999-999999999999', heart: 'on' })).status).toBe(404);
+    expect((await reply({ id, text: 'x'.repeat(281) })).headers.get('Location')).toBe(`/for-you/after-dark?unsent=${id}#entry-${id}`);
+    expect(JSON.parse(kv.data.get('after_dark_replies')!)[0].text).toBe('yes');
+  });
+
+  it('edits an entry keeping its id and date, deletes it with its reply, and rejects bad input', async () => {
+    const { env, kv, entries, saveEntry, admin } = await withEntry();
+    const first = entries()[0];
+    await saveEntry({ id: first.id, title: '', text: 'changed' }, LATER);
+    expect(entries()).toEqual([{ id: first.id, title: '', text: 'changed', created: first.created }]);
+    const bad = await saveEntry({ text: '   ' });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toContain('An entry needs text');
+    expect(entries()).toHaveLength(1);
+    const { csrf, inside } = await comeIn(env);
+    await handleRequest(post('/for-you/after-dark/reply', { csrf, id: first.id, heart: 'on' }, inside), env, NOW);
+    const del = await handleRequest(postForm('/for-you/admin/after-dark/delete', { csrf: admin.csrf, id: first.id }, admin.cookie), env, NOW);
+    expect(del.headers.get('Location')).toBe('/for-you/admin/after-dark?msg=deleted');
+    expect(entries()).toEqual([]);
+    expect(JSON.parse(kv.data.get('after_dark_replies')!)).toEqual([]);
+  });
+
+  it('serves an entry sound only with the door open, and to the admin', async () => {
+    const { env, entries, admin } = await withEntry({ audio: file('a.mp3', 'audio/mpeg') });
+    const key = entries()[0].audio.key;
+    const { cookie, inside } = await comeIn(env);
+    expect((await handleRequest(get(`/for-you/media/${key}`, cookie), env, NOW)).status).toBe(404);
+    expect((await handleRequest(get(`/for-you/media/${key}`, inside), env, NOW)).status).toBe(200);
+    expect((await handleRequest(get(`/for-you/admin/media/${key}`, admin.cookie), env, NOW)).status).toBe(200);
+  });
+
+  it('replaces and removes entry sounds, deleting old files after a day', async () => {
+    const { media, entries, saveEntry } = await withEntry({ audio: file('a.mp3', 'audio/mpeg') });
+    const first = entries()[0];
+    await saveEntry({ id: first.id, text: TEXT, audio: file('b.mp3', 'audio/mpeg') });
+    const second = entries()[0].audio.key;
+    expect(media.objects.has(first.audio.key)).toBe(true);
+    await saveEntry({ id: first.id, text: TEXT, remove_audio: '1' }, LATER);
+    expect(entries()[0].audio).toBeUndefined();
+    expect(media.objects.has(first.audio.key)).toBe(false);
+    expect(media.objects.has(second)).toBe(true);
+  });
+
+  it('notes clean-up never deletes an entry sound, and entry clean-up never deletes a note file', async () => {
+    const { env, media, entries, saveEntry, admin } = await withEntry({ audio: file('a.mp3', 'audio/mpeg') });
+    const entryKey = entries()[0].audio.key;
+    await admin.save({ date: '2026-10-03', text: 'with photo', photo: file('p.jpg', 'image/jpeg') });
+    const noteKey = JSON.parse((env.NOTES as ReturnType<typeof memoryKV>).data.get('notes')!).find((n: { date: string }) => n.date === '2026-10-03').photo.key;
+    await admin.saveAt(LATER, { date: '2026-10-04', text: 'later' });
+    await saveEntry({ text: 'another' }, new Date(LATER.getTime() + 1000));
+    expect(media.objects.has(entryKey)).toBe(true);
+    expect(media.objects.has(noteKey)).toBe(true);
+  });
+
+  it('keeps the notes page working and never overwrites a corrupt value', async () => {
+    const { env, kv, saveEntry, admin } = await withEntry();
+    kv.data.set('after_dark', 'garbage');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const reader = await login(env, 'reader');
+    const page = await handleRequest(get('/for-you', reader), env, NOW);
+    expect(page.status).toBe(200);
+    expect(await page.text()).not.toContain('after dark</a>');
+    const { inside } = await comeIn(env);
+    expect((await handleRequest(get('/for-you/after-dark', inside), env, NOW)).status).toBe(500);
+    expect(await (await handleRequest(get('/for-you/admin/after-dark', admin.cookie), env, NOW)).text()).toContain('Entries could not be read.');
+    expect((await saveEntry({ text: 'x' })).status).toBe(500);
+    expect(kv.data.get('after_dark')).toBe('garbage');
+  });
+
+  it('shows entries without reply areas when replies are corrupt', async () => {
+    const { env, kv } = await withEntry();
+    kv.data.set('after_dark_replies', 'garbage');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { inside } = await comeIn(env);
+    const html = await (await handleRequest(get('/for-you/after-dark', inside), env, NOW)).text();
+    expect(html).toContain(TEXT);
+    expect(html).not.toContain('class="reply"');
+  });
+
+  it('lets the admin preview the room with replies off, and only the admin', async () => {
+    const { env, admin } = await withEntry();
+    const html = await (await handleRequest(get('/for-you/admin/after-dark/preview', admin.cookie), env, NOW)).text();
+    expect(html).toContain(TEXT);
+    expect(html).toContain('<fieldset disabled>');
+    const reader = await login(env, 'reader');
+    expect(await (await handleRequest(get('/for-you/admin/after-dark/preview', reader), env, NOW)).text()).toContain('Admin password');
+    expect(await (await handleRequest(get('/for-you/admin/after-dark', reader), env, NOW)).text()).toContain('Admin password');
+  });
+});

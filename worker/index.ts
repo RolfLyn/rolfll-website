@@ -6,11 +6,17 @@ import {
 import {
   createSession, verifySession, passwordMatches, csrfToken, verifyCsrf,
   readCookie, sessionCookie, isLockedOut, recordFailure, clientKey, type Role,
+  createDoor, verifyDoor, doorCookie, closedDoorCookie,
 } from './auth';
 import { checkFile, newKey, serveMedia, type MediaKind } from './media';
 import { gameToDraft, parseGameForm, type GameDraft } from './game';
 import { parseMeetings, upsertMeeting, removeMeeting, parseMeetingForm, skyFor, type MeetingDraft } from './meetings';
 import { parseReplies, parseReplyForm, setReply, moveReply, dropReply, type Reply } from './replies';
+import {
+  parseEntries, upsertEntry, removeEntry, entryKeys, parseEntryForm, EMPTY_ENTRY,
+  parseEntryReplies, setEntryReply, dropEntryReply, type Entry, type EntryDraft,
+} from './after-dark';
+import { doorwayPage, roomPage, roomErrorPage, afterDarkAdminPage } from './after-dark-views';
 import { readerLoginPage, readerPage, errorPage, adminLoginPage, adminPage } from './views';
 import type { Env, KV, R2 } from './types';
 
@@ -21,6 +27,9 @@ const MAX_LENGTH = 5000;
 const COOKIE: Record<Role, string> = { reader: 'notes_reader', admin: 'notes_admin' };
 const MEETINGS_KEY = 'meetings';
 const REPLIES_KEY = 'replies';
+const ENTRIES_KEY = 'after_dark';
+const ENTRY_REPLIES_KEY = 'after_dark_replies';
+const DOOR_COOKIE = 'notes_door';
 const FLASH: Record<string, string> = {
   saved: 'Saved.', deleted: 'Deleted.', 'meeting-saved': 'Meeting saved.', 'meeting-removed': 'Meeting removed.',
 };
@@ -79,6 +88,14 @@ async function loadReplies(kv: KV): Promise<Reply[]> {
   return parseReplies(await kv.get(REPLIES_KEY));
 }
 
+async function loadEntries(kv: KV): Promise<Entry[]> {
+  return parseEntries(await kv.get(ENTRIES_KEY));
+}
+
+async function loadEntryReplies(kv: KV) {
+  return parseEntryReplies(await kv.get(ENTRY_REPLIES_KEY));
+}
+
 // Pages show the notes even when an extra (meetings, replies) cannot be read; that part is left out.
 async function tryLoad<T>(load: () => Promise<T>, what: string): Promise<T | null> {
   try {
@@ -89,20 +106,20 @@ async function tryLoad<T>(load: () => Promise<T>, what: string): Promise<T | nul
   }
 }
 
-// Keeps replies with their notes. Best-effort: the notes are already saved when this runs,
+// Keeps replies with their notes (or entries). Best-effort: the notes are already saved when this runs,
 // and a missing or unreadable replies value is left exactly as it is.
 // Writes only when a reply actually changes: KV reads can be a minute stale across locations,
 // so an unneeded write could undo a reply she has just sent.
-async function updateReplies(kv: KV, change: (replies: Reply[]) => Reply[]): Promise<void> {
+async function updateStored<T>(kv: KV, key: string, parse: (raw: string) => T[], change: (items: T[]) => T[]): Promise<void> {
   try {
-    const raw = await kv.get(REPLIES_KEY);
+    const raw = await kv.get(key);
     if (raw === null) return;
-    const before = parseReplies(raw);
+    const before = parse(raw);
     const after = change(before);
     if (JSON.stringify(after) === JSON.stringify(before)) return;
-    await kv.put(REPLIES_KEY, JSON.stringify(after));
+    await kv.put(key, JSON.stringify(after));
   } catch (error) {
-    console.error('Could not update replies', error);
+    console.error(`Could not update ${key}`, error);
   }
 }
 
@@ -149,14 +166,14 @@ function parseTrash(raw: string | null): TrashEntry[] {
   }
 }
 
-// Files no longer referenced by any note go to a trash list and are deleted a day later.
+// Files no longer referenced by any note or entry go to a trash list and are deleted a day later.
 // The delay protects against a stale KV read putting a reference back; such files are rescued.
-// Best-effort: the notes are already saved when this runs.
-async function retireOrphans(env: Env, before: Note[], after: Note[], now: Date): Promise<void> {
+// Best-effort: the change is already saved when this runs.
+async function retireOrphans(env: Env, before: string[], inUse: string[], now: Date): Promise<void> {
   try {
-    const keep = new Set(after.flatMap(attachmentKeys));
+    const keep = new Set(inUse);
     let trash = parseTrash(await env.NOTES.get(TRASH_KEY)).filter((e) => !keep.has(e.key));
-    for (const key of before.flatMap(attachmentKeys)) {
+    for (const key of before) {
       if (!keep.has(key) && !trash.some((e) => e.key === key)) trash.push({ key, at: now.getTime() });
     }
     const due = trash.filter((e) => now.getTime() - e.at >= TRASH_GRACE_MS);
@@ -168,6 +185,13 @@ async function retireOrphans(env: Env, before: Note[], after: Note[], now: Date)
   } catch (error) {
     console.error('Could not clean up media', error);
   }
+}
+
+// Every file still referenced. Keys are unique per upload, so if entries can't be read
+// the note side still never touches an entry's file.
+async function keysInUse(kv: KV, notes: Note[], entries?: Entry[]): Promise<string[]> {
+  const others = entries ?? (await tryLoad(() => loadEntries(kv), 'after dark')) ?? [];
+  return [...notes.flatMap(attachmentKeys), ...entryKeys(others)];
 }
 
 async function handleLogin(request: Request, kv: KV, cfg: Config, now: Date, role: Role): Promise<Response> {
@@ -201,6 +225,7 @@ async function showReader(request: Request, kv: KV, cfg: Config, now: Date, url:
   const today = todayInCopenhagen(now);
   const notes = await loadNotes(kv);
   const meetings = await tryLoad(() => loadMeetings(kv), 'meetings');
+  const entries = await tryLoad(() => loadEntries(kv), 'after dark');
   return html(readerPage({
     ...selectForReader(notes, today),
     mediaBase: `${cfg.base}/media`,
@@ -208,6 +233,7 @@ async function showReader(request: Request, kv: KV, cfg: Config, now: Date, url:
     replies: await tryLoad(() => loadReplies(kv), 'replies'),
     reply: { action: `${cfg.base}/reply`, csrf: await csrfToken(session, cfg.secret) },
     unsent: url.searchParams.get('unsent') ?? undefined,
+    afterDark: entries && entries.length ? { href: `${cfg.base}/after-dark`, newest: entries[0].id } : null,
   }));
 }
 
@@ -223,6 +249,54 @@ async function handleReply(request: Request, kv: KV, cfg: Config, now: Date): Pr
   if (!answer) return redirect(`${cfg.base}?unsent=${date}#note-${date}`);
   await kv.put(REPLIES_KEY, JSON.stringify(setReply(await loadReplies(kv), date, answer, now.toISOString())));
   return redirect(`${cfg.base}#note-${date}`);
+}
+
+async function showAfterDark(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
+  const session = await readerSession(request, cfg, now);
+  if (!session) return html(readerLoginPage({ action: `${cfg.base}/login` }));
+  const csrf = await csrfToken(session, cfg.secret);
+  if (!(await doorOpen(request, cfg, now, session))) {
+    return html(doorwayPage({ enter: `${cfg.base}/after-dark/enter`, csrf, back: cfg.base }));
+  }
+  const entries = await tryLoad(() => loadEntries(kv), 'after dark');
+  if (!entries) return html(roomErrorPage(), 500);
+  return html(roomPage({
+    entries,
+    replies: await tryLoad(() => loadEntryReplies(kv), 'after dark replies'),
+    mediaBase: `${cfg.base}/media`,
+    leave: `${cfg.base}/after-dark/leave`,
+    reply: { action: `${cfg.base}/after-dark/reply`, csrf },
+    unsent: url.searchParams.get('unsent') ?? undefined,
+  }));
+}
+
+async function enterAfterDark(request: Request, cfg: Config, now: Date): Promise<Response> {
+  const session = await readerSession(request, cfg, now);
+  if (!session) return redirect(cfg.base);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  const door = await createDoor(session, cfg.secret, now.getTime());
+  return redirect(`${cfg.base}/after-dark`, { 'Set-Cookie': doorCookie(door, cfg.base) });
+}
+
+// Leaving needs no token: the worst a forged request can do is close the door.
+function leaveAfterDark(cfg: Config): Response {
+  return redirect(cfg.base, { 'Set-Cookie': closedDoorCookie(cfg.base) });
+}
+
+async function handleEntryReply(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
+  const room = `${cfg.base}/after-dark`;
+  const session = await readerSession(request, cfg, now);
+  if (!session) return redirect(cfg.base);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  if (!(await doorOpen(request, cfg, now, session))) return redirect(room);
+  const id = field(form, 'id');
+  if (!(await loadEntries(kv)).some((e) => e.id === id)) return notFound();
+  const answer = parseReplyForm((name) => field(form, name));
+  if (!answer) return redirect(`${room}?unsent=${id}#entry-${id}`);
+  await kv.put(ENTRY_REPLIES_KEY, JSON.stringify(setEntryReply(await loadEntryReplies(kv), id, answer, now.toISOString())));
+  return redirect(`${room}#entry-${id}`);
 }
 
 interface AdminView {
@@ -291,11 +365,20 @@ async function showPreview(request: Request, kv: KV, cfg: Config, now: Date, url
 async function showMedia(
   request: Request, env: Env, cfg: Config, now: Date, key: string, asAdmin: boolean,
 ): Promise<Response> {
-  const allowed = asAdmin ? Boolean(await adminSession(request, cfg, now)) : Boolean(await readerSession(request, cfg, now));
-  if (!allowed) return notFound();
+  const session = asAdmin ? await adminSession(request, cfg, now) : await readerSession(request, cfg, now);
+  if (!session) return notFound();
   const note = findByMediaKey(await loadNotes(env.NOTES), key);
-  if (!note || (!asAdmin && note.date > todayInCopenhagen(now))) return notFound();
+  if (note) {
+    if (!asAdmin && note.date > todayInCopenhagen(now)) return notFound();
+  } else {
+    const entry = (await tryLoad(() => loadEntries(env.NOTES), 'after dark'))?.find((e) => e.audio?.key === key);
+    if (!entry || (!asAdmin && !(await doorOpen(request, cfg, now, session)))) return notFound();
+  }
   return (await serveMedia(env.MEDIA, key, request)) ?? notFound();
+}
+
+async function doorOpen(request: Request, cfg: Config, now: Date, session: string): Promise<boolean> {
+  return verifyDoor(readCookie(request, DOOR_COOKIE), session, cfg.secret, now.getTime());
 }
 
 async function adminAction(
@@ -313,8 +396,8 @@ async function adminAction(
   if (action === 'delete') {
     const next = removeNote(notes, date);
     await storeNotes(env.NOTES, next);
-    await retireOrphans(env, notes, next, now);
-    await updateReplies(env.NOTES, (r) => dropReply(r, date));
+    await retireOrphans(env, notes.flatMap(attachmentKeys), await keysInUse(env.NOTES, next), now);
+    await updateStored(env.NOTES, REPLIES_KEY, parseReplies, (r) => dropReply(r, date));
     return redirect(`${adminHome}?msg=deleted`);
   }
 
@@ -356,9 +439,99 @@ async function adminAction(
   const kept = original && original !== date ? removeNote(notes, original) : notes;
   const next = upsertNote(kept, note);
   await storeNotes(env.NOTES, next);
-  await retireOrphans(env, notes, next, now);
-  if (original !== date) await updateReplies(env.NOTES, (r) => moveReply(r, original || undefined, date));
+  await retireOrphans(env, notes.flatMap(attachmentKeys), await keysInUse(env.NOTES, next), now);
+  if (original !== date) await updateStored(env.NOTES, REPLIES_KEY, parseReplies, (r) => moveReply(r, original || undefined, date));
   return redirect(`${adminHome}?msg=saved`);
+}
+
+interface AfterDarkView {
+  editing?: Entry;
+  draft?: EntryDraft;
+  flash?: string;
+  error?: string;
+}
+
+async function renderAfterDarkAdmin(kv: KV, cfg: Config, session: string, view: AfterDarkView, status = 200): Promise<Response> {
+  const entries = await tryLoad(() => loadEntries(kv), 'after dark');
+  const replies = await tryLoad(() => loadEntryReplies(kv), 'after dark replies');
+  const problems = [entries ? '' : 'Entries could not be read.', replies ? '' : 'Replies could not be read.'];
+  return html(afterDarkAdminPage({
+    base: cfg.base,
+    csrf: await csrfToken(session, cfg.secret),
+    entries: entries ?? [],
+    replies: replies ?? [],
+    draft: view.draft ?? (view.editing ? { title: view.editing.title, text: view.editing.text } : EMPTY_ENTRY),
+    editing: view.editing,
+    flash: view.flash,
+    error: [view.error ?? '', ...problems].filter(Boolean).join(' ') || undefined,
+  }), status);
+}
+
+async function showAfterDarkAdmin(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
+  const session = await adminSession(request, cfg, now);
+  if (!session) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
+  const editId = url.searchParams.get('edit');
+  const editing = editId ? (await tryLoad(() => loadEntries(kv), 'after dark'))?.find((e) => e.id === editId) : undefined;
+  const msg = url.searchParams.get('msg') ?? '';
+  return renderAfterDarkAdmin(kv, cfg, session, { editing, flash: Object.hasOwn(FLASH, msg) ? FLASH[msg] : undefined });
+}
+
+async function showAfterDarkPreview(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
+  if (!(await adminSession(request, cfg, now))) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
+  const entries = await tryLoad(() => loadEntries(kv), 'after dark');
+  if (!entries) return html(roomErrorPage(), 500);
+  return html(roomPage({
+    entries, replies: await tryLoad(() => loadEntryReplies(kv), 'after dark replies'),
+    mediaBase: `${cfg.base}/admin/media`, preview: true,
+  }));
+}
+
+async function afterDarkAction(
+  request: Request, env: Env, cfg: Config, now: Date, action: 'save' | 'delete',
+): Promise<Response> {
+  const home = `${cfg.base}/admin/after-dark`;
+  const session = await adminSession(request, cfg, now);
+  if (!session) return redirect(`${cfg.base}/admin`);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  // Both loads throw on corrupt data, before anything is written.
+  const entries = await loadEntries(env.NOTES);
+  const notes = await loadNotes(env.NOTES);
+  const id = field(form, 'id');
+  const existing = entries.find((e) => e.id === id);
+
+  if (action === 'delete') {
+    if (!existing) return redirect(`${home}?msg=deleted`);
+    const next = removeEntry(entries, id);
+    await env.NOTES.put(ENTRIES_KEY, JSON.stringify(next));
+    await retireOrphans(env, entryKeys([existing]), await keysInUse(env.NOTES, notes, next), now);
+    await updateStored(env.NOTES, ENTRY_REPLIES_KEY, parseEntryReplies, (r) => dropEntryReply(r, id));
+    return redirect(`${home}?msg=deleted`);
+  }
+
+  if (id && !existing) return notFound();
+  const parsed = parseEntryForm((name) => field(form, name));
+  const audioFile = uploadedFile(form, 'audio');
+  const audioCheck = audioFile ? checkFile('audio', audioFile) : null;
+  const errors = [parsed.error ?? '', audioCheck && !audioCheck.ok ? audioCheck.error : ''].filter(Boolean);
+  if (errors.length > 0) {
+    return renderAfterDarkAdmin(env.NOTES, cfg, session, { editing: existing, draft: parsed.draft, error: errors.join(' ') }, 400);
+  }
+  const entry: Entry = {
+    id: existing?.id ?? crypto.randomUUID(),
+    title: parsed.draft.title,
+    text: parsed.draft.text,
+    created: existing?.created ?? now.toISOString(),
+  };
+  const audio = await storeUpload(
+    env.MEDIA, 'audio', audioFile, audioCheck?.ok ? audioCheck.type : undefined,
+    field(form, 'remove_audio') === '1' ? undefined : existing?.audio,
+  );
+  if (audio) entry.audio = audio;
+  const next = upsertEntry(entries, entry);
+  await env.NOTES.put(ENTRIES_KEY, JSON.stringify(next));
+  await retireOrphans(env, entryKeys(entries), await keysInUse(env.NOTES, notes, next), now);
+  return redirect(`${home}?msg=saved`);
 }
 
 async function meetingAction(
@@ -414,6 +587,14 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
       case 'POST /admin/login': return await handleLogin(request, kv, cfg, now, 'admin');
       case 'POST /admin/save': return await adminAction(request, env, cfg, now, 'save');
       case 'POST /admin/delete': return await adminAction(request, env, cfg, now, 'delete');
+      case 'GET /after-dark': return await showAfterDark(request, kv, cfg, now, url);
+      case 'POST /after-dark/enter': return await enterAfterDark(request, cfg, now);
+      case 'POST /after-dark/leave': return leaveAfterDark(cfg);
+      case 'POST /after-dark/reply': return await handleEntryReply(request, kv, cfg, now);
+      case 'GET /admin/after-dark': return await showAfterDarkAdmin(request, kv, cfg, now, url);
+      case 'GET /admin/after-dark/preview': return await showAfterDarkPreview(request, kv, cfg, now);
+      case 'POST /admin/after-dark/save': return await afterDarkAction(request, env, cfg, now, 'save');
+      case 'POST /admin/after-dark/delete': return await afterDarkAction(request, env, cfg, now, 'delete');
       default: return notFound();
     }
   } catch (error) {

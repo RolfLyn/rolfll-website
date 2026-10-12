@@ -63,7 +63,7 @@ describe('parseEntryForm', () => {
   });
 
   it('rejects empty or long text and a long title, keeping what was typed', () => {
-    for (const fields of [{ text: '  ' }, { text: 'x'.repeat(5001) }, { text: 'ok', title: 'x'.repeat(121) }]) {
+    for (const fields of <Record<string, string>[]>[{ text: '  ' }, { text: 'x'.repeat(5001) }, { text: 'ok', title: 'x'.repeat(121) }]) {
       const result = parseEntryForm(form(fields));
       expect(result.error).toBe(ENTRY_INVALID);
       expect(result.draft.text).toBe((fields.text ?? '').trim());
