@@ -70,7 +70,10 @@ export function parseRange(
   return { offset: start, length: end - start + 1 };
 }
 
-export async function serveMedia(bucket: R2, key: string, request: Request): Promise<Response | null> {
+// cache: how long her browser may keep the file; after dark sounds use 'no-store' so they never play once the door closes.
+export async function serveMedia(
+  bucket: R2, key: string, request: Request, cache = 'private, max-age=86400',
+): Promise<Response | null> {
   const head = await bucket.head(key);
   if (!head) return null;
   const headers: Record<string, string> = {
@@ -78,7 +81,7 @@ export async function serveMedia(bucket: R2, key: string, request: Request): Pro
     'Accept-Ranges': 'bytes',
     'X-Content-Type-Options': 'nosniff',
     'X-Robots-Tag': 'noindex, nofollow',
-    'Cache-Control': 'private, max-age=86400',
+    'Cache-Control': cache,
   };
   const range = parseRange(request.headers.get('Range'), head.size);
   if (range === 'unsatisfiable') {

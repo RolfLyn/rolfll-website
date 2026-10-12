@@ -803,8 +803,8 @@ describe('after dark', () => {
     expect(res.headers.get('Location')).toBe(`/for-you/after-dark#entry-${id}`);
     expect(JSON.parse(kv.data.get('after_dark_replies')!)).toEqual([{ id, heart: true, text: 'yes', at: NOW.toISOString() }]);
     expect(await (await handleRequest(get('/for-you/after-dark', inside), env, NOW)).text()).toContain('You sent ♥ “yes”');
-    const closed = await reply({ id, heart: 'on', text: 'again' }, cookie);
-    expect(closed.headers.get('Location')).toBe('/for-you/after-dark');
+    expect((await reply({ id, heart: 'on', text: 'yes' }, 'notes_reader=forged')).headers.get('Location')).toBe('/for-you');
+    expect((await reply({ id, heart: 'on', text: 'yes' }, cookie)).headers.get('Location')).toBe(`/for-you/after-dark#entry-${id}`);
     expect((await reply({ id: '99999999-9999-4999-8999-999999999999', heart: 'on' })).status).toBe(404);
     expect((await reply({ id, text: 'x'.repeat(281) })).headers.get('Location')).toBe(`/for-you/after-dark?unsent=${id}#entry-${id}`);
     expect(JSON.parse(kv.data.get('after_dark_replies')!)[0].text).toBe('yes');
@@ -834,6 +834,27 @@ describe('after dark', () => {
     expect((await handleRequest(get(`/for-you/media/${key}`, cookie), env, NOW)).status).toBe(404);
     expect((await handleRequest(get(`/for-you/media/${key}`, inside), env, NOW)).status).toBe(200);
     expect((await handleRequest(get(`/for-you/admin/media/${key}`, admin.cookie), env, NOW)).status).toBe(200);
+  });
+
+  it('never lets the browser keep an entry sound, while note media stays cacheable', async () => {
+    const { env, entries, admin } = await withEntry({ audio: file('a.mp3', 'audio/mpeg') });
+    const key = entries()[0].audio.key;
+    const { inside } = await comeIn(env);
+    expect((await handleRequest(get(`/for-you/media/${key}`, inside), env, NOW)).headers.get('Cache-Control')).toBe('no-store');
+    expect((await handleRequest(get(`/for-you/admin/media/${key}`, admin.cookie), env, NOW)).headers.get('Cache-Control')).toBe('no-store');
+    await admin.save({ date: '2026-10-01', text: 'today', photo: file('p.jpg', 'image/jpeg') });
+    const noteKey = JSON.parse((env.NOTES as ReturnType<typeof memoryKV>).data.get('notes')!)[0].photo.key;
+    const reader = await login(env, 'reader');
+    expect((await handleRequest(get(`/for-you/media/${noteKey}`, reader), env, NOW)).headers.get('Cache-Control')).toBe('private, max-age=86400');
+  });
+
+  it('keeps her reply when the door closed while she was writing', async () => {
+    const { env, kv, entries } = await withEntry();
+    const id = entries()[0].id;
+    const { csrf, inside } = await comeIn(env);
+    const res = await handleRequest(post('/for-you/after-dark/reply', { csrf, id, text: 'late words' }, inside), env, new Date(NOW.getTime() + 45 * 60_000));
+    expect(res.headers.get('Location')).toBe(`/for-you/after-dark#entry-${id}`);
+    expect(JSON.parse(kv.data.get('after_dark_replies')!)[0].text).toBe('late words');
   });
 
   it('replaces and removes entry sounds, deleting old files after a day', async () => {

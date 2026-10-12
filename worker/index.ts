@@ -290,7 +290,7 @@ async function handleEntryReply(request: Request, kv: KV, cfg: Config, now: Date
   if (!session) return redirect(cfg.base);
   const form = await readForm(request);
   if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
-  if (!(await doorOpen(request, cfg, now, session))) return redirect(room);
+  // No door check: posting reveals nothing, and a door that closed while she was writing must not lose her words.
   const id = field(form, 'id');
   if (!(await loadEntries(kv)).some((e) => e.id === id)) return notFound();
   const answer = parseReplyForm((name) => field(form, name));
@@ -370,11 +370,11 @@ async function showMedia(
   const note = findByMediaKey(await loadNotes(env.NOTES), key);
   if (note) {
     if (!asAdmin && note.date > todayInCopenhagen(now)) return notFound();
-  } else {
-    const entry = (await tryLoad(() => loadEntries(env.NOTES), 'after dark'))?.find((e) => e.audio?.key === key);
-    if (!entry || (!asAdmin && !(await doorOpen(request, cfg, now, session)))) return notFound();
+    return (await serveMedia(env.MEDIA, key, request)) ?? notFound();
   }
-  return (await serveMedia(env.MEDIA, key, request)) ?? notFound();
+  const entry = (await tryLoad(() => loadEntries(env.NOTES), 'after dark'))?.find((e) => e.audio?.key === key);
+  if (!entry || (!asAdmin && !(await doorOpen(request, cfg, now, session)))) return notFound();
+  return (await serveMedia(env.MEDIA, key, request, 'no-store')) ?? notFound();
 }
 
 async function doorOpen(request: Request, cfg: Config, now: Date, session: string): Promise<boolean> {

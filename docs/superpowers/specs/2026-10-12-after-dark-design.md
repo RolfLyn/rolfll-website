@@ -52,8 +52,8 @@ The link carries `data-newest="<id of the newest entry>"`, and a tiny inline scr
 - **Style:** the reader page's fonts on a deep plum, almost black, background (`#1a1220`) with warm ink (`#ecdfd0`), muted (`#a8949a`) and candle-gold accent (`#d9a55b`). Entries fade in gently, with no motion under `prefers-reduced-motion`.
 - **The top of the page** has the title "after dark" in italics and the "Leave" link.
 - **Each entry** shows its title (if any, in italics), the formatted date, the text (`white-space: pre-line`), and the sound (`<audio controls preload="none">`). Under each entry is the reply area, with the same markup and behaviour as on notes. It has the anchor `entry-<id>` and posts to `POST <base>/after-dark/reply` with fields `id`, `heart`, `text` and `csrf`.
-- **Replying** needs a reader session, an open door and CSRF.
-  - A closed door redirects to the doorway.
+- **Replying** needs a reader session and CSRF, but not an open door: posting reveals nothing, and a door that closes while she is writing must not lose her words.
+  - Entry sounds are sent with `Cache-Control: no-store`, so her browser never keeps one past the door.
   - An unknown id gets a 404.
   - Text that is too long redirects with `?unsent=<id>#entry-<id>` and shows "That didn't send. Try again?".
   - Success redirects to `<base>/after-dark#entry-<id>`.
