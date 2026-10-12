@@ -84,7 +84,7 @@ Any other key keeps today's rules.
 
 - **A corrupt `after_dark` value:**
   - the reader page simply has no link;
-  - the doorway and room show "Something went wrong loading this page." with a 500;
+  - the doorway still works (it needs no entries), and the room and preview show "Something went wrong loading this page." with a 500;
   - admin shows the error line and refuses saves (500) without overwriting.
 - **A corrupt `after_dark_replies` value:** the room shows the entries without reply areas, admin shows "Replies could not be read.", and replying fails (500) without overwriting.
 - **Escaping:** all entry and reply text reaches HTML only through `escapeHtml`. Nothing goes into scripts except the newest id, which is a UUID the server generated, placed in an attribute.
