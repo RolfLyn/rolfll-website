@@ -262,13 +262,14 @@ function gameData(note: Note, preview: boolean): string {
 }
 
 // A glowing dot on the moon link until she has opened the newest entry (remembered on her phone only).
+// Without storage there is no way to know, so there is no dot.
 const UNREAD_SCRIPT = `<script>
 (function () {
   var link = document.querySelector('.after-dark-link a');
   if (!link) return;
-  var seen = null;
-  try { seen = localStorage.getItem('after-dark-seen'); } catch (e) {}
-  if (seen !== link.getAttribute('data-newest')) link.className = 'unread';
+  try {
+    if (localStorage.getItem('after-dark-seen') !== link.getAttribute('data-newest')) link.className = 'unread';
+  } catch (e) {}
 })();
 </script>`;
 

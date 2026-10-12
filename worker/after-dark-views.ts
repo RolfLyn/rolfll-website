@@ -29,6 +29,7 @@ button { font: inherit; font-size: 1.2rem; padding: 0.55rem 1.6rem; border: 1px 
 .error { color: var(--accent); font-style: italic; margin: 0; }
 ${REPLY_STYLE}
 .reply textarea { background: #24182a; color: var(--ink); border-color: var(--line); }
+.reply-heart .glyph { color: #6b5468; }
 .reply-form button { font-size: 1rem; padding: 0.3rem 0.9rem; }
 @keyframes glow-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .door p, .entry { animation: none; } }

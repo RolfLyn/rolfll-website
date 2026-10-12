@@ -322,3 +322,23 @@ describe('after dark link', () => {
     expect(admin).toContain('href="/for-you/admin/after-dark"');
   });
 });
+
+describe('after dark unread dot', () => {
+  const ID = '11111111-1111-4111-8111-111111111111';
+  const html = readerPage({ mediaBase: '/m', current: { date: '2026-10-01', text: 'hi' }, archive: [], afterDark: { href: '/x', newest: ID } });
+  const script = html.slice(html.lastIndexOf('<script>') + 8, html.lastIndexOf('</script>'));
+  function run(storage: { getItem: (k: string) => string | null }) {
+    const link = { className: '', getAttribute: () => ID };
+    new Function('document', 'localStorage', script)({ querySelector: () => link }, storage);
+    return link.className;
+  }
+
+  it('glows only when storage says the newest entry is unseen', () => {
+    expect(run({ getItem: () => null })).toBe('unread');
+    expect(run({ getItem: () => ID })).toBe('');
+  });
+
+  it('shows no dot when storage is blocked', () => {
+    expect(run({ getItem: () => { throw new Error('blocked'); } })).toBe('');
+  });
+});

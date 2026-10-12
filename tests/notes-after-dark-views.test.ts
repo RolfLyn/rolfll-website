@@ -99,3 +99,9 @@ describe('after dark admin', () => {
     expect(html).toContain('<p class="flash">Saved.</p>');
   });
 });
+
+describe('room style', () => {
+  it('keeps the empty heart visible on the dark background', () => {
+    expect(roomPage({ entries, replies: [], mediaBase: '/m' })).toContain('.reply-heart .glyph { color: #6b5468; }');
+  });
+});
