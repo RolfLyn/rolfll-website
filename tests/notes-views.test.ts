@@ -342,3 +342,15 @@ describe('after dark unread dot', () => {
     expect(run({ getItem: () => { throw new Error('blocked'); } })).toBe('');
   });
 });
+
+describe('after dark link placement', () => {
+  it('sits right under today\'s note, above the earlier notes', () => {
+    const html = readerPage({
+      mediaBase: '/m', current: { date: '2026-10-02', text: 'today' }, archive: [{ date: '2026-10-01', text: 'older' }],
+      replies: [], reply: { action: '/r', csrf: 't' }, afterDark: { href: '/x', newest: '11111111-1111-4111-8111-111111111111' },
+    });
+    const link = html.indexOf('class="after-dark-link"');
+    expect(link).toBeGreaterThan(html.indexOf('id="note-2026-10-02"'));
+    expect(link).toBeLessThan(html.indexOf('Earlier notes'));
+  });
+});

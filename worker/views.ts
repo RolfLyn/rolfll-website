@@ -60,7 +60,7 @@ button { font: inherit; font-size: 1.15rem; padding: 0.55rem 1rem; border: 0; bo
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .message, .photo { animation: none; } }
 ${REPLY_STYLE}
-.after-dark-link { text-align: center; margin: 4rem 0 0; }
+.after-dark-link { text-align: center; margin: 2.75rem 0 0; }
 .after-dark-link a { color: var(--muted); font-style: italic; text-decoration: none; font-size: 1.05rem; }
 .after-dark-link a.unread::after { content: ''; display: inline-block; width: 0.45rem; height: 0.45rem; margin-left: 0.45rem; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); vertical-align: middle; }
 `;
@@ -308,7 +308,7 @@ ${archive.map((n) => `<article${n.game ? ` data-game="${escapeHtml(n.date)}"` : 
 <p class="after-dark-link"><a href="${escapeHtml(afterDark.href)}" data-newest="${escapeHtml(afterDark.newest)}">☾ Daily affirmations… after dark</a></p>
 ${UNREAD_SCRIPT}`
     : '';
-  return readerShell(top + today + past + game + replyScript + door);
+  return readerShell(top + today + door + past + game + replyScript);
 }
 
 export function errorPage(message: string): string {
