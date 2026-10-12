@@ -97,3 +97,31 @@ export async function isLockedOut(kv: KV, ip: string): Promise<boolean> {
 export async function recordFailure(kv: KV, ip: string): Promise<void> {
   await kv.put(`fail:${ip}`, String((await failureCount(kv, ip)) + 1), { expirationTtl: LOCKOUT_SECONDS });
 }
+
+export const DOOR_SECONDS = 1800;
+const DOOR_MS = DOOR_SECONDS * 1000;
+
+/** A short-lived pass into the after-dark room, bound to one reader session. */
+export async function createDoor(session: string, secret: string, nowMs: number): Promise<string> {
+  const expires = nowMs + DOOR_MS;
+  return `door.${expires}.${await hmac(secret, `door:${session}:${expires}`)}`;
+}
+
+export async function verifyDoor(
+  value: string | undefined, session: string, secret: string, nowMs: number,
+): Promise<boolean> {
+  if (!value) return false;
+  const parts = value.split('.');
+  if (parts.length !== 3 || parts[0] !== 'door') return false;
+  const expiresMs = Number(parts[1]);
+  if (!Number.isFinite(expiresMs) || expiresMs <= nowMs || expiresMs > nowMs + DOOR_MS) return false;
+  return timingSafeEqual(parts[2], await hmac(secret, `door:${session}:${parts[1]}`));
+}
+
+export function doorCookie(value: string, path: string): string {
+  return `notes_door=${value}; Path=${path}; Max-Age=${DOOR_SECONDS}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+export function closedDoorCookie(path: string): string {
+  return `notes_door=; Path=${path}; Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
+}
