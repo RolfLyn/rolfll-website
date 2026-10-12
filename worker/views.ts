@@ -4,7 +4,7 @@ import { GAME_SCRIPT, GAME_STYLE } from './game-script';
 import { escapeHtml } from './html';
 import { skyMarkup, SKY_STYLE } from './sky';
 import { EMPTY_MEETING, MEETING_PLACE_MAX, type Meeting, type MeetingDraft, type Sky } from './meetings';
-import type { Reply } from './replies';
+import type { Answer, Reply } from './replies';
 
 export { escapeHtml };
 
@@ -16,6 +16,25 @@ export function formatDate(date: string): string {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC',
   });
 }
+
+export const REPLY_STYLE = `
+.reply { margin: 1.25rem 0 0; }
+.reply-form { display: block; max-width: none; }
+.reply-form fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1.1rem; }
+.reply-form fieldset:disabled { opacity: 0.6; }
+.reply-heart { position: relative; display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; color: var(--muted); font-style: italic; font-size: 1rem; }
+.reply-heart input { position: absolute; opacity: 0; width: 1px; height: 1px; padding: 0; pointer-events: none; }
+.reply-heart .glyph { font-size: 1.6rem; line-height: 1; color: var(--line); transition: color 0.3s, transform 0.3s; }
+.reply-heart input:checked + .glyph { color: var(--accent); transform: scale(1.15); }
+.reply-heart input:focus-visible + .glyph { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.reply details { flex: 1 1 auto; }
+.reply summary { cursor: pointer; color: var(--muted); font-style: italic; list-style: none; }
+.reply summary::-webkit-details-marker { display: none; }
+.reply textarea { display: block; width: 100%; margin: 0.6rem 0; font: inherit; font-size: 1.15rem; padding: 0.6rem 0.8rem; border: 1px solid var(--line); border-radius: 0.5rem; background: #fffaf2; color: var(--ink); resize: vertical; }
+.reply-send { font-size: 1rem; padding: 0.3rem 0.8rem; }
+.reply-sent { margin: 0 0 0.5rem; color: var(--muted); font-style: italic; white-space: pre-line; overflow-wrap: anywhere; }
+.reply .error { margin-top: 0.5rem; }
+`;
 
 const READER_STYLE = `
 :root { --paper: #f6efe3; --ink: #3a2e28; --muted: #8c7b6c; --accent: #b0645a; --line: #e4d8c4; }
@@ -40,22 +59,10 @@ button { font: inherit; font-size: 1.15rem; padding: 0.55rem 1rem; border: 0; bo
 .error { color: var(--accent); font-style: italic; margin: 0; }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .message, .photo { animation: none; } }
-.reply { margin: 1.25rem 0 0; }
-.reply-form { display: block; max-width: none; }
-.reply-form fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1.1rem; }
-.reply-form fieldset:disabled { opacity: 0.6; }
-.reply-heart { position: relative; display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; color: var(--muted); font-style: italic; font-size: 1rem; }
-.reply-heart input { position: absolute; opacity: 0; width: 1px; height: 1px; padding: 0; pointer-events: none; }
-.reply-heart .glyph { font-size: 1.6rem; line-height: 1; color: var(--line); transition: color 0.3s, transform 0.3s; }
-.reply-heart input:checked + .glyph { color: var(--accent); transform: scale(1.15); }
-.reply-heart input:focus-visible + .glyph { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
-.reply details { flex: 1 1 auto; }
-.reply summary { cursor: pointer; color: var(--muted); font-style: italic; list-style: none; }
-.reply summary::-webkit-details-marker { display: none; }
-.reply textarea { display: block; width: 100%; margin: 0.6rem 0; font: inherit; font-size: 1.15rem; padding: 0.6rem 0.8rem; border: 1px solid var(--line); border-radius: 0.5rem; background: #fffaf2; color: var(--ink); resize: vertical; }
-.reply-send { font-size: 1rem; padding: 0.3rem 0.8rem; }
-.reply-sent { margin: 0 0 0.5rem; color: var(--muted); font-style: italic; white-space: pre-line; overflow-wrap: anywhere; }
-.reply .error { margin-top: 0.5rem; }
+${REPLY_STYLE}
+.after-dark-link { text-align: center; margin: 4rem 0 0; }
+.after-dark-link a { color: var(--muted); font-style: italic; text-decoration: none; font-size: 1.05rem; }
+.after-dark-link a.unread::after { content: ''; display: inline-block; width: 0.45rem; height: 0.45rem; margin-left: 0.45rem; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); vertical-align: middle; }
 `;
 
 const ADMIN_STYLE = `
@@ -156,7 +163,7 @@ function gameFields(draft: GameDraft): string {
 </fieldset>`;
 }
 
-function shell(title: string, style: string, body: string, fonts = ''): string {
+export function shell(title: string, style: string, body: string, fonts = ''): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -171,7 +178,7 @@ ${fonts}
 </html>`;
 }
 
-const READER_FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com">
+export const READER_FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&display=swap">`;
 
@@ -179,11 +186,11 @@ function readerShell(body: string): string {
   return shell('For you', READER_STYLE, body, READER_FONTS);
 }
 
-function adminShell(body: string): string {
+export function adminShell(body: string): string {
   return shell('Notes admin', ADMIN_STYLE, body);
 }
 
-function errorLine(error?: string): string {
+export function errorLine(error?: string): string {
   return error ? `<p class="error">${escapeHtml(error)}</p>` : '';
 }
 
@@ -203,12 +210,12 @@ export interface ReplyForm {
 }
 
 /** "♥ “her words”", escaped, for the reader and the admin. */
-export function replySummary(reply: Reply): string {
+export function replySummary(reply: Answer): string {
   return [reply.heart ? '♥' : '', reply.text ? `“${escapeHtml(reply.text)}”` : ''].filter(Boolean).join(' ');
 }
 
 // Tapping the heart sends it straight away; without JavaScript the Send buttons do it.
-const REPLY_SCRIPT = `<script>
+export const REPLY_SCRIPT = `<script>
 (function () {
   var boxes = document.querySelectorAll('.reply-form input[name=heart]');
   for (var i = 0; i < boxes.length; i++) {
@@ -217,11 +224,17 @@ const REPLY_SCRIPT = `<script>
 })();
 </script>`;
 
-function replyArea(date: string, reply: Reply | undefined, form: ReplyForm | undefined, unsent: boolean): string {
+export interface ReplyTarget {
+  field: 'date' | 'id';
+  value: string;
+  anchor: string;
+}
+
+export function replyArea(target: ReplyTarget, reply: Answer | undefined, form: ReplyForm | undefined, unsent: boolean): string {
   const sent = reply ? `<p class="reply-sent">You sent ${replySummary(reply)}</p>\n` : '';
-  return `<div class="reply" id="note-${escapeHtml(date)}">
+  return `<div class="reply" id="${escapeHtml(target.anchor)}">
 ${sent}<form class="reply-form" method="post"${form ? ` action="${escapeHtml(form.action)}"` : ''}><fieldset${form ? '' : ' disabled'}>
-<input type="hidden" name="csrf" value="${form ? escapeHtml(form.csrf) : ''}"><input type="hidden" name="date" value="${escapeHtml(date)}">
+<input type="hidden" name="csrf" value="${form ? escapeHtml(form.csrf) : ''}"><input type="hidden" name="${target.field}" value="${escapeHtml(target.value)}">
 <label class="reply-heart"><input type="checkbox" name="heart" value="on"${reply?.heart ? ' checked' : ''}><span class="glyph" aria-hidden="true">♥</span>Send a heart</label>
 <noscript><button type="submit" class="reply-send">Send</button></noscript>
 <details><summary>Write something back</summary>
@@ -248,12 +261,23 @@ function gameData(note: Note, preview: boolean): string {
   return `<script type="application/json" class="game-data" data-date="${escapeHtml(note.date)}"${preview ? ' data-preview' : ''}>${json}</script>`;
 }
 
-export function readerPage({ current, archive, mediaBase, preview = false, sky = null, replies = null, reply, unsent }: {
+// A glowing dot on the moon link until she has opened the newest entry (remembered on her phone only).
+const UNREAD_SCRIPT = `<script>
+(function () {
+  var link = document.querySelector('.after-dark-link a');
+  if (!link) return;
+  var seen = null;
+  try { seen = localStorage.getItem('after-dark-seen'); } catch (e) {}
+  if (seen !== link.getAttribute('data-newest')) link.className = 'unread';
+})();
+</script>`;
+
+export function readerPage({ current, archive, mediaBase, preview = false, sky = null, replies = null, reply, unsent, afterDark = null }: {
   current: Note | null; archive: Note[]; mediaBase: string; preview?: boolean; sky?: Sky | null;
-  replies?: Reply[] | null; reply?: ReplyForm; unsent?: string;
+  replies?: Reply[] | null; reply?: ReplyForm; unsent?: string; afterDark?: { href: string; newest: string } | null;
 }): string {
   const form = preview ? undefined : reply;
-  const area = (n: Note) => (replies ? replyArea(n.date, replies.find((r) => r.date === n.date), form, unsent === n.date) : '');
+  const area = (n: Note) => (replies ? replyArea({ field: 'date', value: n.date, anchor: `note-${n.date}` }, replies.find((r) => r.date === n.date), form, unsent === n.date) : '');
   const body = current
     ? `<p class="date">${formatDate(current.date)}</p>
 <p class="message">${escapeHtml(current.text)}</p>
@@ -278,7 +302,12 @@ ${archive.map((n) => `<article${n.game ? ` data-game="${escapeHtml(n.date)}"` : 
     : '';
   const replyScript = replies && form && (current || archive.length) ? `\n${REPLY_SCRIPT}` : '';
   const top = sky ? `<style>${SKY_STYLE}</style>\n${skyMarkup(sky)}\n` : '';
-  return readerShell(top + today + past + game + replyScript);
+  const door = afterDark
+    ? `
+<p class="after-dark-link"><a href="${escapeHtml(afterDark.href)}" data-newest="${escapeHtml(afterDark.newest)}">☾ Daily affirmations… after dark</a></p>
+${UNREAD_SCRIPT}`
+    : '';
+  return readerShell(top + today + past + game + replyScript + door);
 }
 
 export function errorPage(message: string): string {
@@ -320,7 +349,7 @@ function formatStamp(at: string): string {
   });
 }
 
-function replyLine(reply: Reply | undefined): string {
+export function replyLine(reply: (Answer & { at: string }) | undefined): string {
   return reply ? `<p class="reply-line">${replySummary(reply)} <span class="hint">${escapeHtml(formatStamp(reply.at))}</span></p>` : '';
 }
 
@@ -369,6 +398,7 @@ export function adminPage(d: AdminPageData): string {
 
   return adminShell(`
 <h1>Notes</h1>
+<p><a href="${escapeHtml(`${d.base}/admin/after-dark`)}">After dark ☾</a></p>
 ${d.flash ? `<p class="flash">${escapeHtml(d.flash)}</p>` : ''}
 ${errorLine(d.error)}
 <h2>Showing today (${formatDate(d.today)})</h2>

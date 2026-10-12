@@ -301,3 +301,24 @@ describe('admin meetings and replies', () => {
     expect(html.match(/class="reply-line"/g)).toHaveLength(1);
   });
 });
+
+describe('after dark link', () => {
+  const ID = '11111111-1111-4111-8111-111111111111';
+
+  it('ends the reader page with a quiet moon link carrying the newest entry id', () => {
+    const html = readerPage({ mediaBase: '/m', current: { date: '2026-10-01', text: 'hi' }, archive: [], afterDark: { href: '/for-you/after-dark', newest: ID } });
+    expect(html).toContain(`<a href="/for-you/after-dark" data-newest="${ID}">☾ Daily affirmations… after dark</a>`);
+    expect(html).toContain("localStorage.getItem('after-dark-seen')");
+    expect(html.indexOf('after-dark-link"')).toBeGreaterThan(html.indexOf('hi</p>'));
+  });
+
+  it('has no link without entries', () => {
+    const html = readerPage({ mediaBase: '/m', current: { date: '2026-10-01', text: 'hi' }, archive: [] });
+    expect(html).not.toContain('after dark</a>');
+    expect(html).not.toContain('after-dark-seen');
+  });
+
+  it('links the admin to the after dark admin', () => {
+    expect(admin).toContain('href="/for-you/admin/after-dark"');
+  });
+});
