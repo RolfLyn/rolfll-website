@@ -31,7 +31,7 @@ export interface ReaderView {
 
 export const MEDIA_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{2,4}$/;
 
-function isAttachment(value: unknown): value is Attachment {
+export function isAttachment(value: unknown): value is Attachment {
   if (typeof value !== 'object' || value === null) return false;
   const { key, type } = value as Record<string, unknown>;
   return typeof key === 'string' && MEDIA_KEY.test(key) && typeof type === 'string';
