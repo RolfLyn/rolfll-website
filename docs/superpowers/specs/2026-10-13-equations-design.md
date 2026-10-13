@@ -67,10 +67,10 @@ All are drawn in a 320×240 box, centred, with a margin.
    - Each frame redraws the curve sampled finely enough for the current k.
    - The counter shows "k = …" to one decimal.
    - The still SVG shows k = 100.
-3. **Butterfly:** r = e^(sin θ) − 2 cos 4θ + sin⁵((2θ − π)/24), for θ from 0 to 24π (x = r sin θ, y = r cos θ, shown upright).
+3. **Butterfly:** r = e^(sin θ) − 2 cos 4θ + sin⁵((2θ − π)/24), for θ from 0 to 24π (x = r cos θ, y = r sin θ, which stands the butterfly upright).
    - It traces over about 12 seconds.
 4. **Fourier heart:** f(t) = Σ cₙ e^(int).
-   - **The coefficients** are the discrete Fourier transform of the heart curve (curve 1), sampled at 256 points. They are ordered by size and the 40 largest are used.
+   - **The coefficients** are the discrete Fourier transform of the classic heart outline (x² + y² − 1)³ = x²y³, sampled at 256 directions from its centre. They are ordered by size and the 40 largest are used. Curve 1 has only seven nonzero terms, so it would be complete after seven circles; this outline has a dip and a point, so each added circle keeps sharpening it, all the way to 40.
    - **The animation** runs in rounds, about 12 seconds in all. Round n draws one full turn of the chain of the n largest circles while the tip traces the partial sum. n grows 1, 2, 3, … (faster as it goes) up to 40.
    - The counter shows "n = …".
    - **At the end** the circles fade, leaving the heart.
