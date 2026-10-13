@@ -152,13 +152,21 @@ ${CURVE_MATH_JS}
     function tick(now) {
       if (!begun) begun = now;
       elapsed = (now - begun) / 1000;
+      // While its note is hidden (behind a game) the panel has no width: wait, and finish once it shows.
+      if (!panel.clientWidth) { requestAnimationFrame(tick); return; }
       done = draw();
       if (done) { panel.className = 'eq-panel live done'; again.hidden = false; }
       else { panel.className = 'eq-panel live'; requestAnimationFrame(tick); }
     }
     function play() { begun = 0; done = false; again.hidden = true; requestAnimationFrame(tick); }
     again.addEventListener('click', function () { if (done) play(); });
-    window.addEventListener('resize', function () { if (done) draw(); });
+    // Repaint a finished drawing only when its size really changed, and never while hidden.
+    function redraw() {
+      if (!done || !panel.clientWidth) return;
+      if (Math.round(panel.clientWidth * Math.min(window.devicePixelRatio || 1, 2)) !== canvas.width) draw();
+    }
+    if (window.ResizeObserver) new ResizeObserver(redraw).observe(panel);
+    window.addEventListener('resize', redraw);
     play();
   }
   var io = new IntersectionObserver(function (entries) {

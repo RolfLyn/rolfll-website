@@ -88,3 +88,73 @@ describe('equation size', () => {
     expect(EQUATION_STYLE).toContain('font-size: clamp(0.8rem, 3.9vw, 1.2rem)');
   });
 });
+
+describe('hidden drawings', () => {
+  function stage() {
+    const frames: ((now: number) => void)[] = [];
+    let observe: (entries: unknown[]) => void = () => {};
+    const watched: unknown[] = [];
+    const sizeWatchers: (() => void)[] = [];
+    const resizers: (() => void)[] = [];
+    const ctx = new Proxy({} as Record<string, unknown>, { get: (t, k: string) => (k in t ? t[k] : () => {}) });
+    const canvas = { width: 0, height: 0, getContext: () => ctx };
+    const panel = { className: 'eq-panel', clientWidth: 320, parentNode: null as unknown, appendChild() {} };
+    const again = { hidden: true, addEventListener() {} };
+    const parts: Record<string, unknown> = { '.eq-panel': panel, '.eq-counter': { textContent: '' }, '.eq-again': again };
+    const fig = { getAttribute: () => 'heart', querySelector: (sel: string) => parts[sel] };
+    panel.parentNode = fig;
+    const win = {
+      requestAnimationFrame: (f: (now: number) => void) => frames.push(f),
+      IntersectionObserver: class {
+        constructor(cb: (entries: unknown[]) => void) { observe = cb; }
+        observe(target: unknown) { watched.push(target); }
+        unobserve() {}
+      },
+      ResizeObserver: class {
+        constructor(cb: () => void) { sizeWatchers.push(cb); }
+        observe() {}
+      },
+      matchMedia: () => ({ matches: false }),
+      devicePixelRatio: 2,
+      addEventListener: (_: string, f: () => void) => resizers.push(f),
+    };
+    const doc = { querySelectorAll: () => [fig], createElement: () => canvas };
+    new Function('window', 'document', 'requestAnimationFrame', 'IntersectionObserver', 'ResizeObserver', body)(
+      win, doc, win.requestAnimationFrame, win.IntersectionObserver, win.ResizeObserver,
+    );
+    let now = 0;
+    const run = (count = 2000) => {
+      for (let i = 0; i < count && frames.length > 0; i++) {
+        now += 16;
+        frames.splice(0).forEach((f) => f(now));
+      }
+    };
+    observe(watched.map((target) => ({ isIntersecting: true, target })));
+    return { run, panel, canvas, again, sizeWatchers, resizers };
+  }
+
+  it('finishes a drawing that was hidden part-way, once its note shows again', () => {
+    const s = stage();
+    s.run(30);
+    s.panel.clientWidth = 0;
+    s.run(1000);
+    expect(s.again.hidden).toBe(true);
+    s.panel.clientWidth = 320;
+    s.run();
+    expect(s.again.hidden).toBe(false);
+    expect(s.canvas.width).toBe(640);
+  });
+
+  it('keeps a finished drawing through a resize while hidden, and redraws at a new size', () => {
+    const s = stage();
+    s.run();
+    expect(s.canvas.width).toBe(640);
+    s.panel.clientWidth = 0;
+    s.resizers.forEach((r) => r());
+    s.sizeWatchers.forEach((r) => r());
+    expect(s.canvas.width).toBe(640);
+    s.panel.clientWidth = 200;
+    s.sizeWatchers.forEach((r) => r());
+    expect(s.canvas.width).toBe(400);
+  });
+});
