@@ -915,3 +915,25 @@ describe('after dark', () => {
     expect(await (await handleRequest(get('/for-you/admin/after-dark', reader), env, NOW)).text()).toContain('Admin password');
   });
 });
+
+describe('equation drawings', () => {
+  it('rejects unknown or too many drawings without saving, and saves good ones unchanged', async () => {
+    const { env, kv } = setup();
+    const admin = await adminWith(env);
+    const bad = await admin.save({ date: '2026-10-01', text: 'Look:\n[[hart]]' });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toContain('Unknown drawing [[hart]]. Use [[heart]], [[filling heart]], [[butterfly]] or [[fourier heart]].');
+    const many = await admin.save({ date: '2026-10-01', text: '[[heart]]\n[[heart]]\n[[butterfly]]\n[[heart]]' });
+    expect(many.status).toBe(400);
+    expect(await many.text()).toContain('A note can hold at most 3 drawings.');
+    expect(kv.data.get('notes')).toBeUndefined();
+    const text = 'Some maths:\n[[ Fourier  Heart ]]\nThat is us.';
+    expect((await admin.save({ date: '2026-10-01', text })).status).toBe(303);
+    expect(JSON.parse(kv.data.get('notes')!)[0].text).toBe(text);
+    expect((await admin.save({ date: '2026-10-01', original: '2026-10-01', text })).status).toBe(303);
+    expect(JSON.parse(kv.data.get('notes')!)[0].text).toBe(text);
+    const page = await (await handleRequest(get('/for-you', await login(env, 'reader')), env, NOW)).text();
+    expect(page).toContain('<figure class="equation" data-curve="fourier heart">');
+    expect(page).toContain('<p class="message">Some maths:</p>');
+  });
+});

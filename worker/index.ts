@@ -17,6 +17,7 @@ import {
   parseEntryReplies, setEntryReply, dropEntryReply, type Entry, type EntryDraft,
 } from './after-dark';
 import { doorwayPage, roomPage, roomErrorPage, afterDarkAdminPage } from './after-dark-views';
+import { checkDrawings } from './equations';
 import { readerLoginPage, readerPage, errorPage, adminLoginPage, adminPage } from './views';
 import type { Env, KV, R2 } from './types';
 
@@ -415,6 +416,8 @@ async function adminAction(
   if (photoCheck && !photoCheck.ok) errors.push(photoCheck.error);
   if (audioCheck && !audioCheck.ok) errors.push(audioCheck.error);
   if (gameForm.error) errors.push(gameForm.error);
+  const drawingError = checkDrawings(text);
+  if (drawingError) errors.push(drawingError);
   if (errors.length > 0) {
     return renderAdmin(env.NOTES, notes, cfg, now, session, {
       form: { ...existing, date, text },
