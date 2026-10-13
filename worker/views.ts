@@ -5,6 +5,8 @@ import { escapeHtml } from './html';
 import { skyMarkup, SKY_STYLE } from './sky';
 import { EMPTY_MEETING, MEETING_PLACE_MAX, type Meeting, type MeetingDraft, type Sky } from './meetings';
 import type { Answer, Reply } from './replies';
+import { splitNote, equationFigure, hasDrawings } from './equations';
+import { EQUATION_STYLE, equationScript } from './equation-script';
 
 export { escapeHtml };
 
@@ -261,6 +263,13 @@ function gameData(note: Note, preview: boolean): string {
   return `<script type="application/json" class="game-data" data-date="${escapeHtml(note.date)}"${preview ? ' data-preview' : ''}>${json}</script>`;
 }
 
+// The note's text as paragraphs, with each drawing in place of its marker.
+function noteText(text: string, cls: string): string {
+  return splitNote(text)
+    .map((piece) => (piece.kind === 'text' ? `<p class="${cls}">${escapeHtml(piece.text)}</p>` : equationFigure(piece.name)))
+    .join('\n');
+}
+
 // A glowing dot on the moon link until she has opened the newest entry (remembered on her phone only).
 // Without storage there is no way to know, so there is no dot.
 const UNREAD_SCRIPT = `<script>
@@ -281,7 +290,7 @@ export function readerPage({ current, archive, mediaBase, preview = false, sky =
   const area = (n: Note) => (replies ? replyArea({ field: 'date', value: n.date, anchor: `note-${n.date}` }, replies.find((r) => r.date === n.date), form, unsent === n.date) : '');
   const body = current
     ? `<p class="date">${formatDate(current.date)}</p>
-<p class="message">${escapeHtml(current.text)}</p>
+${noteText(current.text, 'message')}
 ${photoTag(current, mediaBase, false)}
 ${soundTag(current, mediaBase, false)}
 ${area(current)}`
@@ -294,7 +303,7 @@ ${area(current)}`
   const past = archive.length
     ? `<div class="heart" aria-hidden="true">&#9825;</div>
 <section class="archive"><h2>Earlier notes</h2>
-${archive.map((n) => `<article${n.game ? ` data-game="${escapeHtml(n.date)}"` : ''}><p class="date">${formatDate(n.date)}</p><p class="text">${escapeHtml(n.text)}</p>${photoTag(n, mediaBase, true)}${soundTag(n, mediaBase, true)}${area(n)}</article>`).join('\n')}
+${archive.map((n) => `<article${n.game ? ` data-game="${escapeHtml(n.date)}"` : ''}><p class="date">${formatDate(n.date)}</p>${noteText(n.text, 'text')}${photoTag(n, mediaBase, true)}${soundTag(n, mediaBase, true)}${area(n)}</article>`).join('\n')}
 </section>`
     : '';
   const games = [current, ...archive].filter((n): n is Note => Boolean(n?.game));
@@ -308,7 +317,11 @@ ${archive.map((n) => `<article${n.game ? ` data-game="${escapeHtml(n.date)}"` : 
 <p class="after-dark-link"><a href="${escapeHtml(afterDark.href)}" data-newest="${escapeHtml(afterDark.newest)}">☾ Daily affirmations… after dark</a></p>
 ${UNREAD_SCRIPT}`
     : '';
-  return readerShell(top + today + door + past + game + replyScript);
+  const drawn = [current, ...archive].some((n) => n && hasDrawings(n.text));
+  const equations = drawn ? `
+<style>${EQUATION_STYLE}</style>
+${equationScript()}` : '';
+  return readerShell(top + today + door + past + game + replyScript + equations);
 }
 
 export function errorPage(message: string): string {
@@ -376,7 +389,7 @@ export function adminPage(d: AdminPageData): string {
   const status = (n: Note) => (n.date === d.current?.date ? 'Showing now' : n.date > d.today ? 'Queued' : 'Past');
   const rows = d.notes.map((n) => `<li>
   <div class="meta">
-    <span>${formatDate(n.date)}<span class="tag">${status(n)}</span>${n.audio ? '<span class="tag">Sound</span>' : ''}${n.game ? '<span class="tag">Game</span>' : ''}</span>
+    <span>${formatDate(n.date)}<span class="tag">${status(n)}</span>${n.audio ? '<span class="tag">Sound</span>' : ''}${n.game ? '<span class="tag">Game</span>' : ''}${hasDrawings(n.text) ? '<span class="tag">Equation</span>' : ''}</span>
     <span class="actions">
       <a href="${escapeHtml(`${d.base}/admin/preview?date=${n.date}`)}">Preview</a>
       <a href="${escapeHtml(`${d.base}/admin?edit=${n.date}`)}">Edit</a>
@@ -411,6 +424,7 @@ ${meetingsSection(d.base, csrf, d.meetings ?? [], d.meetingDraft ?? EMPTY_MEETIN
   ${d.original ? `<input type="hidden" name="original" value="${escapeHtml(d.original)}">` : ''}
   <input type="date" name="date" value="${escapeHtml(d.form.date)}" required>
   <textarea name="text" maxlength="5000" required placeholder="Today's note">${escapeHtml(d.form.text)}</textarea>
+  <p class="hint">Drawings: put [[heart]], [[filling heart]], [[butterfly]] or [[fourier heart]] on a line of its own.</p>
   <label class="file">Photo (optional)<input type="file" name="photo" accept="image/*"></label>
   ${currentPhoto}
   <label class="file">Sound (optional)<input type="file" name="audio" accept="audio/*,.m4a"></label>

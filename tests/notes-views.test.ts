@@ -354,3 +354,55 @@ describe('after dark link placement', () => {
     expect(link).toBeLessThan(html.indexOf('Earlier notes'));
   });
 });
+
+describe('equation drawings', () => {
+  const page = (current: string, archive: string[] = [], game = false) => readerPage({
+    mediaBase: '/m',
+    current: { date: '2026-10-05', text: current, ...(game ? { game: { kind: 'distance' as const, from: 'A', to: 'B', km: 10, lines: [] } } : {}) },
+    archive: archive.map((text, i) => ({ date: `2026-10-0${4 - i}`, text })),
+  });
+
+  it('puts the drawing where its marker was, between escaped paragraphs', () => {
+    const html = page('Some <maths>:\n[[filling heart]]\nThat is us.');
+    const before = html.indexOf('<p class="message">Some &lt;maths&gt;:</p>');
+    const figure = html.indexOf('<figure class="equation" data-curve="filling heart">');
+    const after = html.indexOf('<p class="message">That is us.</p>');
+    expect(before).toBeGreaterThan(-1);
+    expect(figure).toBeGreaterThan(before);
+    expect(after).toBeGreaterThan(figure);
+    expect(html).toContain('<style>');
+    expect(html).toContain('threshold: 0.4');
+  });
+
+  it('draws in archive notes too, and leaves notes without markers exactly as before', () => {
+    const html = page('plain today', ['older\n[[butterfly]]', 'older plain']);
+    expect(html).toContain('<p class="message">plain today</p>');
+    expect(html).toContain('<p class="text">older</p>\n<figure class="equation" data-curve="butterfly">');
+    expect(html).toContain('<p class="text">older plain</p>');
+  });
+
+  it('adds no script or style when no note has a drawing', () => {
+    const html = page('plain\nsee [[heart]] mid-line');
+    expect(html).not.toContain('figure class="equation"');
+    expect(html).not.toContain('threshold: 0.4');
+    expect(html).toContain('see [[heart]] mid-line');
+  });
+
+  it('keeps a drawing inside the game note, so it waits for the game to reveal it', () => {
+    const html = page('text\n[[heart]]', [], true);
+    const wrapper = html.indexOf('<div class="note" data-game="2026-10-05">');
+    expect(wrapper).toBeGreaterThan(-1);
+    expect(html.indexOf('data-curve="heart"')).toBeGreaterThan(wrapper);
+    expect(html.indexOf('data-curve="heart"')).toBeLessThan(html.indexOf('</div>', html.indexOf('eq-again')));
+  });
+
+  it('lists the markers under the admin text box and tags notes with drawings', () => {
+    const html = adminPage({
+      base: '/for-you', today: '2026-10-05', current: null, csrf: 't',
+      notes: [{ date: '2026-10-05', text: 'x\n[[heart]]' }, { date: '2026-10-04', text: 'plain' }],
+      form: { date: '2026-10-06', text: '' },
+    });
+    expect(html).toContain('Drawings: put [[heart]], [[filling heart]], [[butterfly]] or [[fourier heart]] on a line of its own.');
+    expect(html.match(/<span class="tag">Equation<\/span>/g)).toHaveLength(1);
+  });
+});
