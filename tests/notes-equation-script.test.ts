@@ -82,3 +82,9 @@ describe('equation script', () => {
     expect(figs[0].again.hidden).toBe(false);
   });
 });
+
+describe('equation size', () => {
+  it('shrinks the maths on narrow phones so it fits without a scrollbar', () => {
+    expect(EQUATION_STYLE).toContain('font-size: clamp(0.8rem, 3.9vw, 1.2rem)');
+  });
+});

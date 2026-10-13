@@ -2,7 +2,7 @@ import { CURVE_NAMES, CURVE_MATH_JS, fitFor, fourierSeries, FILL_K, FILL_X, BUTT
 
 export const EQUATION_STYLE = `
 .equation { margin: 1.75rem 0; }
-.eq-math { overflow-x: auto; overflow-y: hidden; color: var(--ink); font-size: 1.2rem; padding: 0.2rem 0 0.7rem; }
+.eq-math { overflow-x: auto; overflow-y: hidden; color: var(--ink); font-size: clamp(0.8rem, 3.9vw, 1.2rem); padding: 0.2rem 0 0.7rem; scrollbar-width: thin; }
 .eq-panel { position: relative; aspect-ratio: 4 / 3; border-radius: 0.9rem; overflow: hidden; background: linear-gradient(180deg, #1f1530, #3b2752); box-shadow: 0 10px 30px rgba(58, 46, 40, 0.18); }
 .eq-panel svg, .eq-panel canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
 .eq-panel svg path { fill: none; stroke: #e8c27a; stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; filter: drop-shadow(0 0 3px rgba(232, 194, 122, 0.7)); }

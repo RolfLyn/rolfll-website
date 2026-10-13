@@ -61,3 +61,10 @@ describe('equationFigure', () => {
     expect(equationFigure('fourier heart')).toContain('<mo>∑</mo>');
   });
 });
+
+describe('equation typesetting', () => {
+  it('keeps small brackets small next to tall symbols', () => {
+    expect(equationFigure('fourier heart')).toContain('<mi>f</mi><mo stretchy="false">(</mo><mi>t</mi><mo stretchy="false">)</mo>');
+    expect(equationFigure('filling heart')).toContain('<mi>sin</mi><mo stretchy="false">(</mo><mi>k</mi><mi>x</mi><mo stretchy="false">)</mo>');
+  });
+});

@@ -61,9 +61,9 @@ export function splitNote(text: string): Piece[] {
 // The typeset equations, written once per curve.
 const MATH: Record<CurveName, string> = {
   'heart': '<math display="block"><mtable><mtr><mtd><mi>x</mi><mo>=</mo><mn>16</mn><msup><mi>sin</mi><mn>3</mn></msup><mi>t</mi></mtd></mtr><mtr><mtd><mi>y</mi><mo>=</mo><mn>13</mn><mi>cos</mi><mi>t</mi><mo>−</mo><mn>5</mn><mi>cos</mi><mn>2</mn><mi>t</mi><mo>−</mo><mn>2</mn><mi>cos</mi><mn>3</mn><mi>t</mi><mo>−</mo><mi>cos</mi><mn>4</mn><mi>t</mi></mtd></mtr></mtable></math>',
-  'filling heart': '<math display="block"><mi>y</mi><mo>=</mo><msup><mi>x</mi><mfrac><mn>2</mn><mn>3</mn></mfrac></msup><mo>+</mo><mn>0.9</mn><mi>sin</mi><mo>(</mo><mi>k</mi><mi>x</mi><mo>)</mo><msqrt><mn>3</mn><mo>−</mo><msup><mi>x</mi><mn>2</mn></msup></msqrt></math>',
+  'filling heart': '<math display="block"><mi>y</mi><mo>=</mo><msup><mi>x</mi><mfrac><mn>2</mn><mn>3</mn></mfrac></msup><mo>+</mo><mn>0.9</mn><mi>sin</mi><mo stretchy="false">(</mo><mi>k</mi><mi>x</mi><mo stretchy="false">)</mo><msqrt><mn>3</mn><mo>−</mo><msup><mi>x</mi><mn>2</mn></msup></msqrt></math>',
   'butterfly': '<math display="block"><mi>r</mi><mo>=</mo><msup><mi>e</mi><mrow><mi>sin</mi><mi>θ</mi></mrow></msup><mo>−</mo><mn>2</mn><mi>cos</mi><mn>4</mn><mi>θ</mi><mo>+</mo><msup><mi>sin</mi><mn>5</mn></msup><mrow><mo>(</mo><mfrac><mrow><mn>2</mn><mi>θ</mi><mo>−</mo><mi>π</mi></mrow><mn>24</mn></mfrac><mo>)</mo></mrow></math>',
-  'fourier heart': '<math display="block"><mi>f</mi><mo>(</mo><mi>t</mi><mo>)</mo><mo>=</mo><munderover><mo>∑</mo><mrow><mi>n</mi><mo>=</mo><mo>−</mo><mi>∞</mi></mrow><mi>∞</mi></munderover><msub><mi>c</mi><mi>n</mi></msub><msup><mi>e</mi><mrow><mi>i</mi><mi>n</mi><mi>t</mi></mrow></msup></math>',
+  'fourier heart': '<math display="block"><mi>f</mi><mo stretchy="false">(</mo><mi>t</mi><mo stretchy="false">)</mo><mo>=</mo><munderover><mo>∑</mo><mrow><mi>n</mi><mo>=</mo><mo>−</mo><mi>∞</mi></mrow><mi>∞</mi></munderover><msub><mi>c</mi><mi>n</mi></msub><msup><mi>e</mi><mrow><mi>i</mi><mi>n</mi><mi>t</mi></mrow></msup></math>',
 };
 
 /** The equation, the finished curve (seen without JavaScript or with reduced motion) and a replay button. */
