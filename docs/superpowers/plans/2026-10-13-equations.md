@@ -915,3 +915,173 @@ describe('equation drawings', () => {
 });
 ```
 
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `npx vitest run tests/notes-views.test.ts`
+Expected: FAIL in "equation drawings".
+
+- [ ] **Step 3: Implement**
+
+In `worker/views.ts`:
+
+1. **Imports:**
+
+```ts
+import { splitNote, equationFigure, hasDrawings } from './equations';
+import { EQUATION_STYLE, equationScript } from './equation-script';
+```
+
+2. **Above `readerPage`:**
+
+```ts
+// The note's text as paragraphs, with each drawing in place of its marker.
+function noteText(text: string, cls: string): string {
+  return splitNote(text)
+    .map((piece) => (piece.kind === 'text' ? `<p class="${cls}">${escapeHtml(piece.text)}</p>` : equationFigure(piece.name)))
+    .join('\n');
+}
+```
+
+3. **In `readerPage`:**
+   - Replace `<p class="message">${escapeHtml(current.text)}</p>` with `${noteText(current.text, 'message')}`.
+   - In the archive, replace `<p class="text">${escapeHtml(n.text)}</p>` with `${noteText(n.text, 'text')}`.
+   - Before the `return`:
+
+```ts
+  const drawn = [current, ...archive].some((n) => n && hasDrawings(n.text));
+  const equations = drawn ? `\n<style>${EQUATION_STYLE}</style>\n${equationScript()}` : '';
+```
+
+   - Change the return to `return readerShell(top + today + door + past + game + replyScript + equations);`.
+
+4. **In `adminPage`:**
+   - Right after the note `<textarea name="text" …>` line, add:
+
+```ts
+  <p class="hint">Drawings: put [[heart]], [[filling heart]], [[butterfly]] or [[fourier heart]] on a line of its own.</p>
+```
+
+   - In the list row, after the Game tag (`${n.game ? '<span class="tag">Game</span>' : ''}`), add `${hasDrawings(n.text) ? '<span class="tag">Equation</span>' : ''}`.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `npx vitest run tests/notes-views.test.ts tests/notes-routes.test.ts tests/notes-game.test.ts`
+Expected: PASS, including every existing test (notes without markers render byte for byte as before).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add worker/views.ts tests/notes-views.test.ts
+git commit -m "Show equation drawings in notes, with an admin hint and tag"
+```
+
+---
+
+### Task 5: Checking markers on save
+
+**Files:**
+- Modify: `worker/index.ts`
+- Test: `tests/notes-routes.test.ts`
+
+**Interfaces:**
+- Consumes: `checkDrawings` (equations.ts).
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `tests/notes-routes.test.ts`:
+
+```ts
+describe('equation drawings', () => {
+  it('rejects unknown or too many drawings without saving, and saves good ones unchanged', async () => {
+    const { env, kv } = setup();
+    const admin = await adminWith(env);
+    const bad = await admin.save({ date: '2026-10-01', text: 'Look:\n[[hart]]' });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toContain('Unknown drawing [[hart]]. Use [[heart]], [[filling heart]], [[butterfly]] or [[fourier heart]].');
+    const many = await admin.save({ date: '2026-10-01', text: '[[heart]]\n[[heart]]\n[[butterfly]]\n[[heart]]' });
+    expect(many.status).toBe(400);
+    expect(await many.text()).toContain('A note can hold at most 3 drawings.');
+    expect(kv.data.get('notes')).toBeUndefined();
+    const text = 'Some maths:\n[[ Fourier  Heart ]]\nThat is us.';
+    expect((await admin.save({ date: '2026-10-01', text })).status).toBe(303);
+    expect(JSON.parse(kv.data.get('notes')!)[0].text).toBe(text);
+    expect((await admin.save({ date: '2026-10-01', original: '2026-10-01', text })).status).toBe(303);
+    expect(JSON.parse(kv.data.get('notes')!)[0].text).toBe(text);
+    const page = await (await handleRequest(get('/for-you', await login(env, 'reader')), env, NOW)).text();
+    expect(page).toContain('<figure class="equation" data-curve="fourier heart">');
+    expect(page).toContain('<p class="message">Some maths:</p>');
+  });
+});
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `npx vitest run tests/notes-routes.test.ts`
+Expected: FAIL in "equation drawings": the unknown marker saves with 303.
+
+- [ ] **Step 3: Implement**
+
+In `worker/index.ts`:
+- Add `import { checkDrawings } from './equations';`.
+- In `adminAction`, after `if (gameForm.error) errors.push(gameForm.error);`, add:
+
+```ts
+  const drawingError = checkDrawings(text);
+  if (drawingError) errors.push(drawingError);
+```
+
+- [ ] **Step 4: Run the whole suite and typecheck**
+
+Run: `npm test`, then `npx tsc --noEmit -p . 2>&1 | grep -c error`
+Expected: all tests pass, and the type error count equals the pre-existing 6.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add worker/index.ts tests/notes-routes.test.ts
+git commit -m "Refuse unknown drawings and more than three per note"
+```
+
+---
+
+### Task 6: README and browser check
+
+**Files:**
+- Modify: `README.md`
+
+- [ ] **Step 1: Document**
+
+Add after the after dark bullet in "Private notes":
+
+```markdown
+- Equation drawings: a line in a note that is exactly `[[heart]]`, `[[filling heart]]`, `[[butterfly]]` or `[[fourier heart]]` (any case and spacing; at most 3 per note) becomes a typeset equation over a dark panel where the curve draws itself once it scrolls into view. The finished curve is also drawn server-side as an SVG, which is what readers without JavaScript or with reduced motion see. Unknown markers are refused on save. Nothing new is stored, and older Worker versions show the marker as text.
+```
+
+- [ ] **Step 2: Browser check**
+
+Run `npx astro build && npx wrangler dev --port 8787` (local KV only). In local admin, write placeholder notes:
+- today's note with text around `[[filling heart]]` and `[[fourier heart]]`;
+- an archive note with `[[heart]]` and `[[butterfly]]`;
+- a game note containing `[[heart]]`.
+
+Then check, with Playwright at 375×553, 320×568 and 1280×800:
+- **Each animation** plays once in view and ends on the finished curve. Draw again replays it. The counters read "k = 100.0" and "n = 40" at the end.
+- **The equations** typeset (screenshot), and on the 320px width the page has no sideways scroll (`document.documentElement.scrollWidth <= innerWidth`).
+- **The game note's drawing** starts only after the game reveals the note.
+- **Resizing** after a drawing finishes keeps it drawn.
+- **Reduced motion:** the still SVGs show, with no canvas.
+- **No JavaScript:** the still SVGs show and Draw again stays hidden.
+- **No console errors.**
+- **Admin:** the hint, the Equation tag and Preview.
+
+Stop workerd when done.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add README.md
+git commit -m "Document equation drawings"
+```
+
+Deploying is a separate, confirmed step: back up `notes`, `meetings`, `replies`, `after_dark` and `after_dark_replies` (counts only, skipping keys that don't exist), then merge, test, push, and compare after deploy.
