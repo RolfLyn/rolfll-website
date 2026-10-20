@@ -66,7 +66,9 @@ const PAINTING_SCRIPT = `<script>
   function show(id) {
     hide();
     open = document.getElementById('card-' + id);
-    if (open) open.hidden = false;
+    if (!open) return;
+    open.hidden = false;
+    open.querySelector('.close').focus();
   }
   function recount() {
     if (!count) return;
