@@ -18,11 +18,6 @@ import {
 } from './after-dark';
 import { doorwayPage, roomPage, roomErrorPage, afterDarkAdminPage } from './after-dark-views';
 import { checkDrawings } from './equations';
-import {
-  parseSecrets, upsertSecret, removeSecret, parseSecretForm, tooClose, parseFound, markFound, dropFound,
-  EMPTY_SECRET, type Secret, type SecretDraft,
-} from './painting';
-import { paintingPage, paintingAdminPage } from './painting-views';
 import { readerLoginPage, readerPage, errorPage, adminLoginPage, adminPage } from './views';
 import type { Env, KV, R2 } from './types';
 
@@ -36,9 +31,6 @@ const REPLIES_KEY = 'replies';
 const ENTRIES_KEY = 'after_dark';
 const ENTRY_REPLIES_KEY = 'after_dark_replies';
 const DOOR_COOKIE = 'notes_door';
-const SECRETS_KEY = 'secrets';
-const FOUND_KEY = 'secrets_found';
-const SECRET_REPLIES_KEY = 'secret_replies';
 const FLASH: Record<string, string> = {
   saved: 'Saved.', deleted: 'Deleted.', 'meeting-saved': 'Meeting saved.', 'meeting-removed': 'Meeting removed.',
 };
@@ -103,19 +95,6 @@ async function loadEntries(kv: KV): Promise<Entry[]> {
 
 async function loadEntryReplies(kv: KV) {
   return parseEntryReplies(await kv.get(ENTRY_REPLIES_KEY));
-}
-
-async function loadSecrets(kv: KV): Promise<Secret[]> {
-  return parseSecrets(await kv.get(SECRETS_KEY));
-}
-
-async function loadFound(kv: KV) {
-  return parseFound(await kv.get(FOUND_KEY));
-}
-
-// Secret replies have the same shape as after dark replies: one per id.
-async function loadSecretReplies(kv: KV) {
-  return parseEntryReplies(await kv.get(SECRET_REPLIES_KEY));
 }
 
 // Pages show the notes even when an extra (meetings, replies) cannot be read; that part is left out.
@@ -248,13 +227,7 @@ async function showReader(request: Request, kv: KV, cfg: Config, now: Date, url:
   const notes = await loadNotes(kv);
   const meetings = await tryLoad(() => loadMeetings(kv), 'meetings');
   const entries = await tryLoad(() => loadEntries(kv), 'after dark');
-  const secrets = await tryLoad(() => loadSecrets(kv), 'secrets');
-  const found = await tryLoad(() => loadFound(kv), 'found secrets');
   return html(readerPage({
-    painting: {
-      href: `${cfg.base}/painting`,
-      unread: Boolean(secrets && found && secrets.some((s) => !found.some((f) => f.id === s.id))),
-    },
     ...selectForReader(notes, today),
     mediaBase: `${cfg.base}/media`,
     sky: meetings && skyFor(notes, meetings, today),
@@ -325,56 +298,6 @@ async function handleEntryReply(request: Request, kv: KV, cfg: Config, now: Date
   if (!answer) return redirect(`${room}?unsent=${id}#entry-${id}`);
   await kv.put(ENTRY_REPLIES_KEY, JSON.stringify(setEntryReply(await loadEntryReplies(kv), id, answer, now.toISOString())));
   return redirect(`${room}#entry-${id}`);
-}
-
-async function showPainting(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
-  const session = await readerSession(request, cfg, now);
-  if (!session) return html(readerLoginPage({ action: `${cfg.base}/login` }));
-  const csrf = await csrfToken(session, cfg.secret);
-  return html(paintingPage({
-    secrets: (await tryLoad(() => loadSecrets(kv), 'secrets')) ?? [],
-    found: (await tryLoad(() => loadFound(kv), 'found secrets')) ?? [],
-    replies: await tryLoad(() => loadSecretReplies(kv), 'secret replies'),
-    back: cfg.base,
-    foundAction: `${cfg.base}/painting/found`,
-    reply: { action: `${cfg.base}/painting/reply`, csrf },
-    open: url.searchParams.get('open') ?? undefined,
-    unsent: url.searchParams.get('unsent') ?? undefined,
-  }));
-}
-
-// Checks the reader's session and token and that the secret exists; returns its id, or the response to send.
-async function secretRequest(request: Request, kv: KV, cfg: Config, now: Date): Promise<{ id: string; form: FormData } | Response> {
-  const session = await readerSession(request, cfg, now);
-  if (!session) return redirect(cfg.base);
-  const form = await readForm(request);
-  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
-  const id = field(form, 'id');
-  if (!(await loadSecrets(kv)).some((s) => s.id === id)) return notFound();
-  return { id, form };
-}
-
-async function handleFound(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
-  const checked = await secretRequest(request, kv, cfg, now);
-  if (checked instanceof Response) return checked;
-  const { id, form } = checked;
-  const found = await loadFound(kv);
-  const next = markFound(found, id, now.toISOString());
-  if (next !== found) await kv.put(FOUND_KEY, JSON.stringify(next));
-  return field(form, 'quiet') === '1'
-    ? new Response(null, { status: 204, headers: PAGE_HEADERS })
-    : redirect(`${cfg.base}/painting?open=${id}`);
-}
-
-async function handleSecretReply(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
-  const checked = await secretRequest(request, kv, cfg, now);
-  if (checked instanceof Response) return checked;
-  const { id, form } = checked;
-  const card = `${cfg.base}/painting?open=${id}`;
-  const answer = parseReplyForm((name) => field(form, name));
-  if (!answer) return redirect(`${card}&unsent=${id}#secret-${id}`);
-  await kv.put(SECRET_REPLIES_KEY, JSON.stringify(setEntryReply(await loadSecretReplies(kv), id, answer, now.toISOString())));
-  return redirect(`${card}#secret-${id}`);
 }
 
 interface AdminView {
@@ -614,92 +537,6 @@ async function afterDarkAction(
   return redirect(`${home}?msg=saved`);
 }
 
-interface PaintingView {
-  editing?: Secret;
-  draft?: SecretDraft;
-  flash?: string;
-  error?: string;
-}
-
-const percentOf = (n: number) => String(Math.round(n * 10000) / 100);
-
-async function renderPaintingAdmin(kv: KV, cfg: Config, session: string, view: PaintingView, status = 200): Promise<Response> {
-  const secrets = await tryLoad(() => loadSecrets(kv), 'secrets');
-  const found = await tryLoad(() => loadFound(kv), 'found secrets');
-  const replies = await tryLoad(() => loadSecretReplies(kv), 'secret replies');
-  const problems = [
-    secrets ? '' : 'Secrets could not be read.', found ? '' : 'Found times could not be read.', replies ? '' : 'Replies could not be read.',
-  ];
-  const e = view.editing;
-  return html(paintingAdminPage({
-    base: cfg.base,
-    csrf: await csrfToken(session, cfg.secret),
-    secrets: secrets ?? [],
-    found: found ?? [],
-    replies: replies ?? [],
-    draft: view.draft ?? (e ? { text: e.text, x: percentOf(e.x), y: percentOf(e.y) } : EMPTY_SECRET),
-    editing: e,
-    flash: view.flash,
-    error: [view.error ?? '', ...problems].filter(Boolean).join(' ') || undefined,
-  }), status);
-}
-
-async function showPaintingAdmin(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
-  const session = await adminSession(request, cfg, now);
-  if (!session) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
-  const editId = url.searchParams.get('edit');
-  const editing = editId ? (await tryLoad(() => loadSecrets(kv), 'secrets'))?.find((s) => s.id === editId) : undefined;
-  const msg = url.searchParams.get('msg') ?? '';
-  return renderPaintingAdmin(kv, cfg, session, { editing, flash: Object.hasOwn(FLASH, msg) ? FLASH[msg] : undefined });
-}
-
-async function showPaintingPreview(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
-  if (!(await adminSession(request, cfg, now))) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
-  return html(paintingPage({
-    secrets: (await tryLoad(() => loadSecrets(kv), 'secrets')) ?? [],
-    found: (await tryLoad(() => loadFound(kv), 'found secrets')) ?? [],
-    replies: await tryLoad(() => loadSecretReplies(kv), 'secret replies'),
-    back: `${cfg.base}/admin/painting`,
-    open: url.searchParams.get('open') ?? undefined,
-    preview: `${cfg.base}/admin/painting/preview`,
-  }));
-}
-
-async function paintingAction(request: Request, kv: KV, cfg: Config, now: Date, action: 'save' | 'delete'): Promise<Response> {
-  const home = `${cfg.base}/admin/painting`;
-  const session = await adminSession(request, cfg, now);
-  if (!session) return redirect(`${cfg.base}/admin`);
-  const form = await readForm(request);
-  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
-  // Throws on corrupt data, before anything is written.
-  const secrets = await loadSecrets(kv);
-  const id = field(form, 'id');
-  const existing = secrets.find((s) => s.id === id);
-
-  if (action === 'delete') {
-    if (!existing) return redirect(`${home}?msg=deleted`);
-    await kv.put(SECRETS_KEY, JSON.stringify(removeSecret(secrets, id)));
-    await updateStored(kv, FOUND_KEY, parseFound, (f) => dropFound(f, id));
-    await updateStored(kv, SECRET_REPLIES_KEY, parseEntryReplies, (r) => dropEntryReply(r, id));
-    return redirect(`${home}?msg=deleted`);
-  }
-
-  if (id && !existing) return notFound();
-  const parsed = parseSecretForm((name) => field(form, name));
-  const clash = parsed.value ? tooClose(secrets, parsed.value.x, parsed.value.y, existing?.id) : null;
-  const error = parsed.error ?? (clash ? `Too close to secret ${clash}, pick another blossom.` : undefined);
-  if (error || !parsed.value) {
-    return renderPaintingAdmin(kv, cfg, session, { editing: existing, draft: parsed.draft, error }, 400);
-  }
-  const secret: Secret = {
-    id: existing?.id ?? crypto.randomUUID(),
-    ...parsed.value,
-    created: existing?.created ?? now.toISOString(),
-  };
-  await kv.put(SECRETS_KEY, JSON.stringify(upsertSecret(secrets, secret)));
-  return redirect(`${home}?msg=saved`);
-}
-
 async function meetingAction(
   request: Request, kv: KV, cfg: Config, now: Date, action: 'save' | 'delete',
 ): Promise<Response> {
@@ -761,13 +598,6 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
       case 'GET /admin/after-dark/preview': return await showAfterDarkPreview(request, kv, cfg, now);
       case 'POST /admin/after-dark/save': return await afterDarkAction(request, env, cfg, now, 'save');
       case 'POST /admin/after-dark/delete': return await afterDarkAction(request, env, cfg, now, 'delete');
-      case 'GET /painting': return await showPainting(request, kv, cfg, now, url);
-      case 'POST /painting/found': return await handleFound(request, kv, cfg, now);
-      case 'POST /painting/reply': return await handleSecretReply(request, kv, cfg, now);
-      case 'GET /admin/painting': return await showPaintingAdmin(request, kv, cfg, now, url);
-      case 'GET /admin/painting/preview': return await showPaintingPreview(request, kv, cfg, now, url);
-      case 'POST /admin/painting/save': return await paintingAction(request, kv, cfg, now, 'save');
-      case 'POST /admin/painting/delete': return await paintingAction(request, kv, cfg, now, 'delete');
       default: return notFound();
     }
   } catch (error) {

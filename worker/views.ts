@@ -64,11 +64,7 @@ button { font: inherit; font-size: 1.15rem; padding: 0.55rem 1rem; border: 0; bo
 ${REPLY_STYLE}
 .after-dark-link { text-align: center; margin: 2.75rem 0 0; }
 .after-dark-link a { color: var(--muted); font-style: italic; text-decoration: none; font-size: 1.05rem; }
-.painting-link { text-align: center; margin: 2.75rem 0 0; }
-.painting-link + .after-dark-link { margin-top: 1rem; }
-.painting-link a { color: var(--muted); font-style: italic; text-decoration: none; font-size: 1.05rem; }
-.painting-link svg { width: 1.15em; height: 1.15em; vertical-align: -0.2em; margin-right: 0.4rem; }
-.after-dark-link a.unread::after, .painting-link a.unread::after { content: ''; display: inline-block; width: 0.45rem; height: 0.45rem; margin-left: 0.45rem; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); vertical-align: middle; }
+.after-dark-link a.unread::after { content: ''; display: inline-block; width: 0.45rem; height: 0.45rem; margin-left: 0.45rem; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); vertical-align: middle; }
 `;
 
 const ADMIN_STYLE = `
@@ -274,10 +270,6 @@ function noteText(text: string, cls: string): string {
     .join('\n');
 }
 
-// A small almond blossom for the painting link.
-const BLOSSOM = `<svg viewBox="-10 -10 20 20" aria-hidden="true">${[0, 72, 144, 216, 288]
-  .map((a) => `<ellipse cx="0" cy="-4.8" rx="3.3" ry="4.6" fill="#efc6be" transform="rotate(${a})"/>`).join('')}<circle r="1.7" fill="#b0645a"/></svg>`;
-
 // A glowing dot on the moon link until she has opened the newest entry (remembered on her phone only).
 // Without storage there is no way to know, so there is no dot.
 const UNREAD_SCRIPT = `<script>
@@ -290,10 +282,9 @@ const UNREAD_SCRIPT = `<script>
 })();
 </script>`;
 
-export function readerPage({ current, archive, mediaBase, preview = false, sky = null, replies = null, reply, unsent, afterDark = null, painting = null }: {
+export function readerPage({ current, archive, mediaBase, preview = false, sky = null, replies = null, reply, unsent, afterDark = null }: {
   current: Note | null; archive: Note[]; mediaBase: string; preview?: boolean; sky?: Sky | null;
   replies?: Reply[] | null; reply?: ReplyForm; unsent?: string; afterDark?: { href: string; newest: string } | null;
-  painting?: { href: string; unread: boolean } | null;
 }): string {
   const form = preview ? undefined : reply;
   const area = (n: Note) => (replies ? replyArea({ field: 'date', value: n.date, anchor: `note-${n.date}` }, replies.find((r) => r.date === n.date), form, unsent === n.date) : '');
@@ -326,15 +317,11 @@ ${archive.map((n) => `<article${n.game ? ` data-game="${escapeHtml(n.date)}"` : 
 <p class="after-dark-link"><a href="${escapeHtml(afterDark.href)}" data-newest="${escapeHtml(afterDark.newest)}">☾ Daily affirmations… after dark</a></p>
 ${UNREAD_SCRIPT}`
     : '';
-  const blossom = painting
-    ? `
-<p class="painting-link"><a href="${escapeHtml(painting.href)}"${painting.unread ? ' class="unread"' : ''}>${BLOSSOM}A painting for you</a></p>`
-    : '';
   const drawn = [current, ...archive].some((n) => n && hasDrawings(n.text));
   const equations = drawn ? `
 <style>${EQUATION_STYLE}</style>
 ${equationScript()}` : '';
-  return readerShell(top + today + blossom + door + past + game + replyScript + equations);
+  return readerShell(top + today + door + past + game + replyScript + equations);
 }
 
 export function errorPage(message: string): string {
@@ -370,7 +357,7 @@ export interface AdminPageData {
   replies?: Reply[];
 }
 
-export function formatStamp(at: string): string {
+function formatStamp(at: string): string {
   return new Date(at).toLocaleString(LOCALE, {
     day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Copenhagen',
   });
@@ -425,7 +412,7 @@ export function adminPage(d: AdminPageData): string {
 
   return adminShell(`
 <h1>Notes</h1>
-<p><a href="${escapeHtml(`${d.base}/admin/after-dark`)}">After dark ☾</a> · <a href="${escapeHtml(`${d.base}/admin/painting`)}">Painting ❀</a></p>
+<p><a href="${escapeHtml(`${d.base}/admin/after-dark`)}">After dark ☾</a></p>
 ${d.flash ? `<p class="flash">${escapeHtml(d.flash)}</p>` : ''}
 ${errorLine(d.error)}
 <h2>Showing today (${formatDate(d.today)})</h2>
