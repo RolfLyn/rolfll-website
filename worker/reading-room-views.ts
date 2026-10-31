@@ -26,6 +26,7 @@ main { max-width: 60rem; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
 .book:focus-visible .spine { outline: 2px solid #f0d29a; outline-offset: 2px; }
 .title, .author { writing-mode: vertical-rl; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .title { flex: 1 1 auto; min-height: 0; font-size: 1.02rem; font-weight: 500; letter-spacing: 0.02em; }
+.title.long { white-space: normal; font-size: 0.86rem; line-height: 1.05; max-width: 2.1em; }
 .author { flex: 0 0 auto; max-height: 40%; margin-top: 0.45rem; font-size: 0.72rem; font-style: italic; opacity: 0.8; }
 .book.new::after { content: ''; position: absolute; right: 26%; bottom: calc(-1 * var(--board) - 0.35rem); width: 0.36rem; height: calc(var(--board) + 0.9rem); background: linear-gradient(#f1d08a, #c9963f); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 80%, 0 100%); opacity: 0.9; }
 .sheet-wrap { position: fixed; inset: 0; z-index: 3; display: flex; align-items: flex-end; justify-content: center; padding: 0 0.5rem; background: rgba(15, 10, 8, 0.55); }
@@ -174,6 +175,9 @@ export const ROOM_SCRIPT = `<script>
 })();
 </script>`;
 
+// Titles longer than this wrap onto a second line of the spine, a little smaller.
+const LONG_TITLE = 12;
+
 function roomShell(body: string): string {
   return shell('The reading room', ROOM_STYLE, body, READER_FONTS);
 }
@@ -193,7 +197,7 @@ export function readingRoomPage({ books, played, replies, back, mediaBase, playA
   const spines = books.map((b) => {
     const look = spineLook(b.id);
     const isNew = !played.some((p) => p.id === b.id);
-    return `<a class="book${isNew ? ' new' : ''}" href="${escapeHtml(`${home}?open=${b.id}`)}" data-id="${escapeHtml(b.id)}" style="--h:${look.height}%;--w:${look.width}rem;--c:${look.colour}"><span class="spine"><span class="title">${escapeHtml(b.title)}</span><span class="author">${escapeHtml(b.author)}</span></span></a>`;
+    return `<a class="book${isNew ? ' new' : ''}" href="${escapeHtml(`${home}?open=${b.id}`)}" data-id="${escapeHtml(b.id)}" style="--h:${look.height}%;--w:${look.width}rem;--c:${look.colour}"><span class="spine"><span class="title${b.title.length > LONG_TITLE ? ' long' : ''}">${escapeHtml(b.title)}</span><span class="author">${escapeHtml(b.author)}</span></span></a>`;
   }).join('\n');
   const recording = !preview && playAction && reply
     ? ` data-played="${escapeHtml(playAction)}" data-csrf="${escapeHtml(reply.csrf)}"`
@@ -263,7 +267,7 @@ ${errorLine(d.error)}
   <input name="author" maxlength="${BOOK_LIMITS.author}" required placeholder="Author" value="${escapeHtml(d.draft.author)}">
   <textarea name="line" maxlength="${BOOK_LIMITS.line}" placeholder="A line from you (optional)">${escapeHtml(d.draft.line)}</textarea>
   <label class="file">Recording<input type="file" name="audio" accept="audio/*,.m4a"${d.editing ? '' : ' required'}></label>
-  <p class="hint">M4A, MP3, AAC or WAV, up to 25 MB (about 25 to 50 minutes).${d.editing ? ' Leave empty to keep the current recording.' : ''}</p>
+  <p class="hint">Short titles fit the spine best; the full title shows when she opens the book. M4A, MP3, AAC or WAV, up to 25 MB (about 25 to 50 minutes).${d.editing ? ' Leave empty to keep the current recording.' : ''}</p>
   <button type="submit">Save</button>
 </form>
 <h2>The shelf</h2>
