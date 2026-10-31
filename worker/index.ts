@@ -18,6 +18,11 @@ import {
 } from './after-dark';
 import { doorwayPage, roomPage, roomErrorPage, afterDarkAdminPage } from './after-dark-views';
 import { checkDrawings } from './equations';
+import {
+  parseBooks, upsertBook, removeBook, bookKeys, parseBookForm, parsePlayed, markPlayed, dropPlayed,
+  EMPTY_BOOK, RECORDING_NEEDED, type Book, type BookDraft,
+} from './books';
+import { readingRoomPage, readingRoomErrorPage, readingRoomAdminPage } from './reading-room-views';
 import { readerLoginPage, readerPage, errorPage, adminLoginPage, adminPage } from './views';
 import type { Env, KV, R2 } from './types';
 
@@ -31,6 +36,9 @@ const REPLIES_KEY = 'replies';
 const ENTRIES_KEY = 'after_dark';
 const ENTRY_REPLIES_KEY = 'after_dark_replies';
 const DOOR_COOKIE = 'notes_door';
+const BOOKS_KEY = 'books';
+const PLAYED_KEY = 'books_played';
+const BOOK_REPLIES_KEY = 'book_replies';
 const FLASH: Record<string, string> = {
   saved: 'Saved.', deleted: 'Deleted.', 'meeting-saved': 'Meeting saved.', 'meeting-removed': 'Meeting removed.',
 };
@@ -95,6 +103,19 @@ async function loadEntries(kv: KV): Promise<Entry[]> {
 
 async function loadEntryReplies(kv: KV) {
   return parseEntryReplies(await kv.get(ENTRY_REPLIES_KEY));
+}
+
+async function loadBooks(kv: KV): Promise<Book[]> {
+  return parseBooks(await kv.get(BOOKS_KEY));
+}
+
+async function loadPlayed(kv: KV) {
+  return parsePlayed(await kv.get(PLAYED_KEY));
+}
+
+// Book replies have the same shape as after dark replies: one per id.
+async function loadBookReplies(kv: KV) {
+  return parseEntryReplies(await kv.get(BOOK_REPLIES_KEY));
 }
 
 // Pages show the notes even when an extra (meetings, replies) cannot be read; that part is left out.
@@ -188,11 +209,12 @@ async function retireOrphans(env: Env, before: string[], inUse: string[], now: D
   }
 }
 
-// Every file still referenced. Keys are unique per upload, so if entries can't be read
-// the note side still never touches an entry's file.
-async function keysInUse(kv: KV, notes: Note[], entries?: Entry[]): Promise<string[]> {
+// Every file still referenced. Keys are unique per upload, so if entries or books can't be read
+// the other sides still never touch their files: only a side's own old keys are ever retired.
+async function keysInUse(kv: KV, notes: Note[], entries?: Entry[], books?: Book[]): Promise<string[]> {
   const others = entries ?? (await tryLoad(() => loadEntries(kv), 'after dark')) ?? [];
-  return [...notes.flatMap(attachmentKeys), ...entryKeys(others)];
+  const shelf = books ?? (await tryLoad(() => loadBooks(kv), 'books')) ?? [];
+  return [...notes.flatMap(attachmentKeys), ...entryKeys(others), ...bookKeys(shelf)];
 }
 
 async function handleLogin(request: Request, kv: KV, cfg: Config, now: Date, role: Role): Promise<Response> {
@@ -227,7 +249,13 @@ async function showReader(request: Request, kv: KV, cfg: Config, now: Date, url:
   const notes = await loadNotes(kv);
   const meetings = await tryLoad(() => loadMeetings(kv), 'meetings');
   const entries = await tryLoad(() => loadEntries(kv), 'after dark');
+  const books = await tryLoad(() => loadBooks(kv), 'books');
+  const played = await tryLoad(() => loadPlayed(kv), 'played books');
   return html(readerPage({
+    reading: {
+      href: `${cfg.base}/reading-room`,
+      unread: Boolean(books && played && books.some((b) => !played.some((p) => p.id === b.id))),
+    },
     ...selectForReader(notes, today),
     mediaBase: `${cfg.base}/media`,
     sky: meetings && skyFor(notes, meetings, today),
@@ -298,6 +326,59 @@ async function handleEntryReply(request: Request, kv: KV, cfg: Config, now: Date
   if (!answer) return redirect(`${room}?unsent=${id}#entry-${id}`);
   await kv.put(ENTRY_REPLIES_KEY, JSON.stringify(setEntryReply(await loadEntryReplies(kv), id, answer, now.toISOString())));
   return redirect(`${room}#entry-${id}`);
+}
+
+async function showReadingRoom(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
+  const session = await readerSession(request, cfg, now);
+  if (!session) return html(readerLoginPage({ action: `${cfg.base}/login` }));
+  const books = await tryLoad(() => loadBooks(kv), 'books');
+  if (!books) return html(readingRoomErrorPage(), 500);
+  return html(readingRoomPage({
+    books,
+    played: (await tryLoad(() => loadPlayed(kv), 'played books')) ?? [],
+    replies: await tryLoad(() => loadBookReplies(kv), 'book replies'),
+    back: cfg.base,
+    mediaBase: `${cfg.base}/media`,
+    playAction: `${cfg.base}/reading-room/played`,
+    reply: { action: `${cfg.base}/reading-room/reply`, csrf: await csrfToken(session, cfg.secret) },
+    open: url.searchParams.get('open') ?? undefined,
+    unsent: url.searchParams.get('unsent') ?? undefined,
+  }));
+}
+
+// Checks the reader's session and token and that the book exists; returns its id and form, or the response to send.
+async function bookRequest(request: Request, kv: KV, cfg: Config, now: Date): Promise<{ id: string; form: FormData } | Response> {
+  const session = await readerSession(request, cfg, now);
+  if (!session) return redirect(cfg.base);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  const id = field(form, 'id');
+  if (!(await loadBooks(kv)).some((b) => b.id === id)) return notFound();
+  return { id, form };
+}
+
+const quietDone = () => new Response(null, { status: 204, headers: PAGE_HEADERS });
+
+async function handlePlayed(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
+  const checked = await bookRequest(request, kv, cfg, now);
+  if (checked instanceof Response) return checked;
+  const played = await loadPlayed(kv);
+  const next = markPlayed(played, checked.id, now.toISOString());
+  if (next !== played) await kv.put(PLAYED_KEY, JSON.stringify(next));
+  return field(checked.form, 'quiet') === '1' ? quietDone() : redirect(`${cfg.base}/reading-room?open=${checked.id}`);
+}
+
+// The script sends replies quietly so the reading keeps playing; without it the page reloads on the open book.
+async function handleBookReply(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
+  const checked = await bookRequest(request, kv, cfg, now);
+  if (checked instanceof Response) return checked;
+  const { id, form } = checked;
+  const quiet = field(form, 'quiet') === '1';
+  const book = `${cfg.base}/reading-room?open=${id}`;
+  const answer = parseReplyForm((name) => field(form, name));
+  if (!answer) return quiet ? new Response(null, { status: 400, headers: PAGE_HEADERS }) : redirect(`${book}&unsent=${id}#reply-${id}`);
+  await kv.put(BOOK_REPLIES_KEY, JSON.stringify(setEntryReply(await loadBookReplies(kv), id, answer, now.toISOString())));
+  return quiet ? quietDone() : redirect(`${book}#reply-${id}`);
 }
 
 interface AdminView {
@@ -373,6 +454,8 @@ async function showMedia(
     if (!asAdmin && note.date > todayInCopenhagen(now)) return notFound();
     return (await serveMedia(env.MEDIA, key, request)) ?? notFound();
   }
+  const book = (await tryLoad(() => loadBooks(env.NOTES), 'books'))?.find((b) => b.audio.key === key);
+  if (book) return (await serveMedia(env.MEDIA, key, request)) ?? notFound();
   const entry = (await tryLoad(() => loadEntries(env.NOTES), 'after dark'))?.find((e) => e.audio?.key === key);
   if (!entry || (!asAdmin && !(await doorOpen(request, cfg, now, session)))) return notFound();
   return (await serveMedia(env.MEDIA, key, request, 'no-store')) ?? notFound();
@@ -537,6 +620,108 @@ async function afterDarkAction(
   return redirect(`${home}?msg=saved`);
 }
 
+interface ReadingRoomView {
+  editing?: Book;
+  draft?: BookDraft;
+  flash?: string;
+  error?: string;
+}
+
+async function renderReadingRoomAdmin(kv: KV, cfg: Config, session: string, view: ReadingRoomView, status = 200): Promise<Response> {
+  const books = await tryLoad(() => loadBooks(kv), 'books');
+  const played = await tryLoad(() => loadPlayed(kv), 'played books');
+  const replies = await tryLoad(() => loadBookReplies(kv), 'book replies');
+  const problems = [
+    books ? '' : 'Books could not be read.', played ? '' : 'Play times could not be read.', replies ? '' : 'Replies could not be read.',
+  ];
+  const e = view.editing;
+  return html(readingRoomAdminPage({
+    base: cfg.base,
+    csrf: await csrfToken(session, cfg.secret),
+    books: books ?? [],
+    played: played ?? [],
+    replies: replies ?? [],
+    draft: view.draft ?? (e ? { title: e.title, author: e.author, line: e.line } : EMPTY_BOOK),
+    editing: e,
+    flash: view.flash,
+    error: [view.error ?? '', ...problems].filter(Boolean).join(' ') || undefined,
+  }), status);
+}
+
+async function showReadingRoomAdmin(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
+  const session = await adminSession(request, cfg, now);
+  if (!session) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
+  const editId = url.searchParams.get('edit');
+  const editing = editId ? (await tryLoad(() => loadBooks(kv), 'books'))?.find((b) => b.id === editId) : undefined;
+  const msg = url.searchParams.get('msg') ?? '';
+  return renderReadingRoomAdmin(kv, cfg, session, { editing, flash: Object.hasOwn(FLASH, msg) ? FLASH[msg] : undefined });
+}
+
+async function showReadingRoomPreview(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
+  if (!(await adminSession(request, cfg, now))) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
+  const books = await tryLoad(() => loadBooks(kv), 'books');
+  if (!books) return html(readingRoomErrorPage(), 500);
+  return html(readingRoomPage({
+    books,
+    played: (await tryLoad(() => loadPlayed(kv), 'played books')) ?? [],
+    replies: await tryLoad(() => loadBookReplies(kv), 'book replies'),
+    back: `${cfg.base}/admin/reading-room`,
+    mediaBase: `${cfg.base}/admin/media`,
+    open: url.searchParams.get('open') ?? undefined,
+    preview: `${cfg.base}/admin/reading-room/preview`,
+  }));
+}
+
+async function readingRoomAction(
+  request: Request, env: Env, cfg: Config, now: Date, action: 'save' | 'delete',
+): Promise<Response> {
+  const home = `${cfg.base}/admin/reading-room`;
+  const session = await adminSession(request, cfg, now);
+  if (!session) return redirect(`${cfg.base}/admin`);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  // Both loads throw on corrupt data, before anything is written or uploaded.
+  const books = await loadBooks(env.NOTES);
+  const notes = await loadNotes(env.NOTES);
+  const id = field(form, 'id');
+  const existing = books.find((b) => b.id === id);
+
+  if (action === 'delete') {
+    if (!existing) return redirect(`${home}?msg=deleted`);
+    const next = removeBook(books, id);
+    await env.NOTES.put(BOOKS_KEY, JSON.stringify(next));
+    await retireOrphans(env, bookKeys([existing]), await keysInUse(env.NOTES, notes, undefined, next), now);
+    await updateStored(env.NOTES, PLAYED_KEY, parsePlayed, (p) => dropPlayed(p, id));
+    await updateStored(env.NOTES, BOOK_REPLIES_KEY, parseEntryReplies, (r) => dropEntryReply(r, id));
+    return redirect(`${home}?msg=deleted`);
+  }
+
+  if (id && !existing) return notFound();
+  const parsed = parseBookForm((name) => field(form, name));
+  const audioFile = uploadedFile(form, 'audio');
+  const audioCheck = audioFile ? checkFile('audio', audioFile) : null;
+  const errors = [
+    parsed.error ?? '',
+    audioCheck && !audioCheck.ok ? audioCheck.error : '',
+    !audioFile && !existing ? RECORDING_NEEDED : '',
+  ].filter(Boolean);
+  if (errors.length > 0) {
+    return renderReadingRoomAdmin(env.NOTES, cfg, session, { editing: existing, draft: parsed.draft, error: errors.join(' ') }, 400);
+  }
+  const audio = await storeUpload(env.MEDIA, 'audio', audioFile, audioCheck?.ok ? audioCheck.type : undefined, existing?.audio);
+  if (!audio) return renderReadingRoomAdmin(env.NOTES, cfg, session, { editing: existing, draft: parsed.draft, error: RECORDING_NEEDED }, 400);
+  const book: Book = {
+    id: existing?.id ?? crypto.randomUUID(),
+    ...parsed.draft,
+    created: existing?.created ?? now.toISOString(),
+    audio,
+  };
+  const next = upsertBook(books, book);
+  await env.NOTES.put(BOOKS_KEY, JSON.stringify(next));
+  await retireOrphans(env, bookKeys(books), await keysInUse(env.NOTES, notes, undefined, next), now);
+  return redirect(`${home}?msg=saved`);
+}
+
 async function meetingAction(
   request: Request, kv: KV, cfg: Config, now: Date, action: 'save' | 'delete',
 ): Promise<Response> {
@@ -598,6 +783,13 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
       case 'GET /admin/after-dark/preview': return await showAfterDarkPreview(request, kv, cfg, now);
       case 'POST /admin/after-dark/save': return await afterDarkAction(request, env, cfg, now, 'save');
       case 'POST /admin/after-dark/delete': return await afterDarkAction(request, env, cfg, now, 'delete');
+      case 'GET /reading-room': return await showReadingRoom(request, kv, cfg, now, url);
+      case 'POST /reading-room/played': return await handlePlayed(request, kv, cfg, now);
+      case 'POST /reading-room/reply': return await handleBookReply(request, kv, cfg, now);
+      case 'GET /admin/reading-room': return await showReadingRoomAdmin(request, kv, cfg, now, url);
+      case 'GET /admin/reading-room/preview': return await showReadingRoomPreview(request, kv, cfg, now, url);
+      case 'POST /admin/reading-room/save': return await readingRoomAction(request, env, cfg, now, 'save');
+      case 'POST /admin/reading-room/delete': return await readingRoomAction(request, env, cfg, now, 'delete');
       default: return notFound();
     }
   } catch (error) {

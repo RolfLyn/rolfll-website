@@ -64,7 +64,11 @@ button { font: inherit; font-size: 1.15rem; padding: 0.55rem 1rem; border: 0; bo
 ${REPLY_STYLE}
 .after-dark-link { text-align: center; margin: 2.75rem 0 0; }
 .after-dark-link a { color: var(--muted); font-style: italic; text-decoration: none; font-size: 1.05rem; }
-.after-dark-link a.unread::after { content: ''; display: inline-block; width: 0.45rem; height: 0.45rem; margin-left: 0.45rem; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); vertical-align: middle; }
+.reading-link { text-align: center; margin: 2.75rem 0 0; }
+.reading-link + .after-dark-link { margin-top: 1rem; }
+.reading-link a { color: var(--muted); font-style: italic; text-decoration: none; font-size: 1.05rem; }
+.reading-link svg { width: 1.2em; height: 1.2em; vertical-align: -0.22em; margin-right: 0.4rem; }
+.after-dark-link a.unread::after, .reading-link a.unread::after { content: ''; display: inline-block; width: 0.45rem; height: 0.45rem; margin-left: 0.45rem; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); vertical-align: middle; }
 `;
 
 const ADMIN_STYLE = `
@@ -270,6 +274,9 @@ function noteText(text: string, cls: string): string {
     .join('\n');
 }
 
+// A small open book for the reading room link.
+const BOOK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M12 6.5C10 5 7 4.5 3.5 5v13c3.5-.5 6.5 0 8.5 1.5 2-1.5 5-2 8.5-1.5V5C17 4.5 14 5 12 6.5z"/><path d="M12 6.5v13"/></svg>';
+
 // A glowing dot on the moon link until she has opened the newest entry (remembered on her phone only).
 // Without storage there is no way to know, so there is no dot.
 const UNREAD_SCRIPT = `<script>
@@ -282,9 +289,10 @@ const UNREAD_SCRIPT = `<script>
 })();
 </script>`;
 
-export function readerPage({ current, archive, mediaBase, preview = false, sky = null, replies = null, reply, unsent, afterDark = null }: {
+export function readerPage({ current, archive, mediaBase, preview = false, sky = null, replies = null, reply, unsent, afterDark = null, reading = null }: {
   current: Note | null; archive: Note[]; mediaBase: string; preview?: boolean; sky?: Sky | null;
   replies?: Reply[] | null; reply?: ReplyForm; unsent?: string; afterDark?: { href: string; newest: string } | null;
+  reading?: { href: string; unread: boolean } | null;
 }): string {
   const form = preview ? undefined : reply;
   const area = (n: Note) => (replies ? replyArea({ field: 'date', value: n.date, anchor: `note-${n.date}` }, replies.find((r) => r.date === n.date), form, unsent === n.date) : '');
@@ -317,11 +325,15 @@ ${archive.map((n) => `<article${n.game ? ` data-game="${escapeHtml(n.date)}"` : 
 <p class="after-dark-link"><a href="${escapeHtml(afterDark.href)}" data-newest="${escapeHtml(afterDark.newest)}">☾ Daily affirmations… after dark</a></p>
 ${UNREAD_SCRIPT}`
     : '';
+  const room = reading
+    ? `
+<p class="reading-link"><a href="${escapeHtml(reading.href)}"${reading.unread ? ' class="unread"' : ''}>${BOOK_ICON}The reading room</a></p>`
+    : '';
   const drawn = [current, ...archive].some((n) => n && hasDrawings(n.text));
   const equations = drawn ? `
 <style>${EQUATION_STYLE}</style>
 ${equationScript()}` : '';
-  return readerShell(top + today + door + past + game + replyScript + equations);
+  return readerShell(top + today + room + door + past + game + replyScript + equations);
 }
 
 export function errorPage(message: string): string {
@@ -357,7 +369,7 @@ export interface AdminPageData {
   replies?: Reply[];
 }
 
-function formatStamp(at: string): string {
+export function formatStamp(at: string): string {
   return new Date(at).toLocaleString(LOCALE, {
     day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Copenhagen',
   });
@@ -412,7 +424,7 @@ export function adminPage(d: AdminPageData): string {
 
   return adminShell(`
 <h1>Notes</h1>
-<p><a href="${escapeHtml(`${d.base}/admin/after-dark`)}">After dark ☾</a></p>
+<p><a href="${escapeHtml(`${d.base}/admin/after-dark`)}">After dark ☾</a> · <a href="${escapeHtml(`${d.base}/admin/reading-room`)}">Reading room</a></p>
 ${d.flash ? `<p class="flash">${escapeHtml(d.flash)}</p>` : ''}
 ${errorLine(d.error)}
 <h2>Showing today (${formatDate(d.today)})</h2>

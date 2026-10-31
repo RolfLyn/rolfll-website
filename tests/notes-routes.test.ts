@@ -937,3 +937,164 @@ describe('equation drawings', () => {
     expect(page).toContain('<p class="message">Some maths:</p>');
   });
 });
+
+describe('reading room', () => {
+  async function withBook(fields: Record<string, string | File> = {}) {
+    const ctx = setup();
+    seed(ctx.kv, [{ date: '2026-10-01', text: 'today' }]);
+    const admin = await adminWith(ctx.env);
+    const saveBook = (f: Record<string, string | File>, when = NOW) =>
+      handleRequest(postForm('/for-you/admin/reading-room/save', { csrf: admin.csrf, ...f }, admin.cookie), ctx.env, when);
+    const res = await saveBook({ title: 'Persuasion', author: 'Jane Austen', line: 'for you', audio: file('reading.m4a', 'audio/mp4', 50), ...fields });
+    const books = () => JSON.parse(ctx.kv.data.get('books') ?? '[]');
+    const reader = await login(ctx.env, 'reader');
+    const csrf = await readerCsrf(ctx.env, reader);
+    return { ...ctx, admin, res, books, saveBook, reader, csrf };
+  }
+
+  it('saves a book with its recording and shows it on the shelf', async () => {
+    const { env, res, books, media, reader } = await withBook();
+    expect(res.status).toBe(303);
+    expect(res.headers.get('Location')).toBe('/for-you/admin/reading-room?msg=saved');
+    const [b] = books();
+    expect(b).toMatchObject({ title: 'Persuasion', author: 'Jane Austen', line: 'for you', created: NOW.toISOString(), audio: { type: 'audio/mp4' } });
+    expect(media.objects.has(b.audio.key)).toBe(true);
+    const page = await handleRequest(get('/for-you/reading-room', reader), env, NOW);
+    expect(page.headers.get('Cache-Control')).toBe('no-store');
+    const html = await page.text();
+    expect(html).toContain('<span class="title">Persuasion</span>');
+    expect(html).toContain(`<a class="book new" href="/for-you/reading-room?open=${b.id}"`);
+    expect(html).toContain(`src="/for-you/media/${b.audio.key}"`);
+  });
+
+  it('serves recordings to her and the admin only', async () => {
+    const { env, books, reader, admin } = await withBook();
+    const key = books()[0].audio.key;
+    expect((await handleRequest(get(`/for-you/media/${key}`, reader), env, NOW)).status).toBe(200);
+    expect((await handleRequest(get(`/for-you/admin/media/${key}`, admin.cookie), env, NOW)).status).toBe(200);
+    expect((await handleRequest(get(`/for-you/media/${key}`), env, NOW)).status).toBe(404);
+  });
+
+  it('asks her to log in first', async () => {
+    const { env } = await withBook();
+    const html = await (await handleRequest(get('/for-you/reading-room'), env, NOW)).text();
+    expect(html).toContain('Password');
+    expect(html).not.toContain('Persuasion');
+    expect((await handleRequest(post('/for-you/reading-room/played', { csrf: 'x', id: 'x' }), env, NOW)).headers.get('Location')).toBe('/for-you');
+  });
+
+  it('shows the link on the notes page always, with a dot until every book is played', async () => {
+    const { env: empty, kv } = setup();
+    seed(kv, [{ date: '2026-10-01', text: 'today' }]);
+    expect(await (await handleRequest(get('/for-you', await login(empty, 'reader')), empty, NOW)).text())
+      .toContain('<p class="reading-link"><a href="/for-you/reading-room">');
+    const { env, reader, csrf, books } = await withBook();
+    expect(await (await handleRequest(get('/for-you', reader), env, NOW)).text())
+      .toContain('<p class="reading-link"><a href="/for-you/reading-room" class="unread">');
+    const res = await handleRequest(post('/for-you/reading-room/played', { csrf, id: books()[0].id, quiet: '1' }, reader), env, NOW);
+    expect(res.status).toBe(204);
+    expect(await (await handleRequest(get('/for-you', reader), env, NOW)).text())
+      .toContain('<p class="reading-link"><a href="/for-you/reading-room">');
+  });
+
+  it('records only the first play', async () => {
+    const { env, kv, reader, csrf, books } = await withBook();
+    const id = books()[0].id;
+    await handleRequest(post('/for-you/reading-room/played', { csrf, id, quiet: '1' }, reader), env, NOW);
+    expect(JSON.parse(kv.data.get('books_played')!)).toEqual([{ id, at: NOW.toISOString() }]);
+    const puts = kv.puts.length;
+    expect((await handleRequest(post('/for-you/reading-room/played', { csrf, id, quiet: '1' }, reader), env, LATER)).status).toBe(204);
+    expect(kv.puts.length).toBe(puts);
+    const html = await (await handleRequest(get('/for-you/reading-room', reader), env, NOW)).text();
+    expect(html).toContain(`<a class="book" href="/for-you/reading-room?open=${id}"`);
+  });
+
+  it('refuses a bad token or an unknown book without writing', async () => {
+    const { env, kv, reader, csrf, books } = await withBook();
+    expect((await handleRequest(post('/for-you/reading-room/played', { csrf: 'nope', id: books()[0].id }, reader), env, NOW)).status).toBe(403);
+    expect((await handleRequest(post('/for-you/reading-room/played', { csrf, id: '99999999-9999-4999-8999-999999999999' }, reader), env, NOW)).status).toBe(404);
+    expect((await handleRequest(post('/for-you/reading-room/reply', { csrf, id: 'nope', heart: 'on' }, reader), env, NOW)).status).toBe(404);
+    expect(kv.data.has('books_played')).toBe(false);
+    expect(kv.data.has('book_replies')).toBe(false);
+  });
+
+  it('takes a heart or a line back, quietly for the script or with a redirect to the open book', async () => {
+    const { env, reader, csrf, books, admin } = await withBook();
+    const id = books()[0].id;
+    const reply = (fields: Record<string, string>) => handleRequest(post('/for-you/reading-room/reply', { csrf, id, ...fields }, reader), env, NOW);
+    expect((await reply({ heart: 'on', text: 'more please', quiet: '1' })).status).toBe(204);
+    expect(await (await handleRequest(get(`/for-you/reading-room?open=${id}`, reader), env, NOW)).text()).toContain('You sent ♥ “more please”');
+    expect((await reply({ heart: 'on' })).headers.get('Location')).toBe(`/for-you/reading-room?open=${id}#reply-${id}`);
+    expect((await reply({ text: 'x'.repeat(281), quiet: '1' })).status).toBe(400);
+    expect((await reply({ text: 'x'.repeat(281) })).headers.get('Location')).toBe(`/for-you/reading-room?open=${id}&unsent=${id}#reply-${id}`);
+    expect(await (await handleRequest(get('/for-you/admin/reading-room', admin.cookie), env, NOW)).text()).toContain('♥');
+  });
+
+  it('rejects a book without words or a recording, keeping what was typed', async () => {
+    const { saveBook, books } = await withBook();
+    const bad = await saveBook({ title: 'Only a title', author: '', audio: file('a.m4a', 'audio/mp4') });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toContain('value="Only a title"');
+    const silent = await saveBook({ title: 'Sonnet 116', author: 'Shakespeare' });
+    expect(silent.status).toBe(400);
+    expect(await silent.text()).toContain('A new book needs its recording.');
+    const wrong = await saveBook({ title: 'Sonnet 116', author: 'Shakespeare', audio: file('a.txt', 'text/plain') });
+    expect(await wrong.text()).toContain('Sound must be M4A, MP3, AAC or WAV.');
+    expect(books()).toHaveLength(1);
+  });
+
+  it('edits words keeping the recording, swaps a recording into the trash, and keeps recordings when notes are saved', async () => {
+    const { kv, books, saveBook, admin, media } = await withBook();
+    const [b] = books();
+    expect((await saveBook({ id: b.id, title: 'Persuasion, ch. 1', author: 'Jane Austen', line: '' })).status).toBe(303);
+    expect(books()[0]).toMatchObject({ id: b.id, title: 'Persuasion, ch. 1', line: '', audio: b.audio, created: b.created });
+    await admin.save({ date: '2026-10-02', text: 'a note' });
+    expect(JSON.parse(kv.data.get('trash') ?? '[]')).toEqual([]);
+    expect(media.objects.has(b.audio.key)).toBe(true);
+    await saveBook({ id: b.id, title: 'Persuasion, ch. 1', author: 'Jane Austen', audio: file('new.mp3', 'audio/mpeg') });
+    expect(books()[0].audio.key).not.toBe(b.audio.key);
+    expect(JSON.parse(kv.data.get('trash')!).map((t: { key: string }) => t.key)).toEqual([b.audio.key]);
+    expect((await saveBook({ id: '99999999-9999-4999-8999-999999999999', title: 'x', author: 'y', audio: file('a.m4a', 'audio/mp4') })).status).toBe(404);
+  });
+
+  it('deletes a book with its play time and reply, trashing its recording', async () => {
+    const { env, kv, reader, csrf, books, admin } = await withBook();
+    const [b] = books();
+    await handleRequest(post('/for-you/reading-room/played', { csrf, id: b.id, quiet: '1' }, reader), env, NOW);
+    await handleRequest(post('/for-you/reading-room/reply', { csrf, id: b.id, heart: 'on' }, reader), env, NOW);
+    const del = await handleRequest(postForm('/for-you/admin/reading-room/delete', { csrf: admin.csrf, id: b.id }, admin.cookie), env, NOW);
+    expect(del.headers.get('Location')).toBe('/for-you/admin/reading-room?msg=deleted');
+    expect(books()).toEqual([]);
+    expect(JSON.parse(kv.data.get('books_played')!)).toEqual([]);
+    expect(JSON.parse(kv.data.get('book_replies')!)).toEqual([]);
+    expect(JSON.parse(kv.data.get('trash')!).map((t: { key: string }) => t.key)).toEqual([b.audio.key]);
+  });
+
+  it('lets only the admin edit and preview, and the preview records nothing', async () => {
+    const { env, kv, admin, reader, books } = await withBook();
+    const id = books()[0].id;
+    expect(await (await handleRequest(get(`/for-you/admin/reading-room?edit=${id}`, admin.cookie), env, NOW)).text()).toContain('<h2>Edit book</h2>');
+    const html = await (await handleRequest(get(`/for-you/admin/reading-room/preview?open=${id}`, admin.cookie), env, NOW)).text();
+    expect(html).toContain(`<div class="sheet-wrap" id="book-${id}">`);
+    expect(html).toContain('<fieldset disabled>');
+    expect(html).not.toContain('data-played="');
+    expect(kv.data.has('books_played')).toBe(false);
+    expect(await (await handleRequest(get('/for-you/admin/reading-room/preview', reader), env, NOW)).text()).toContain('Admin password');
+    expect(await (await handleRequest(get('/for-you/admin/reading-room', reader), env, NOW)).text()).toContain('Admin password');
+    expect((await handleRequest(postForm('/for-you/admin/reading-room/save', { csrf: 'x', title: 'x', author: 'y' }, reader), env, NOW)).headers.get('Location')).toBe('/for-you/admin');
+    expect(await (await handleRequest(get('/for-you/admin', admin.cookie), env, NOW)).text()).toContain('href="/for-you/admin/reading-room"');
+  });
+
+  it('keeps pages working with corrupt books and never overwrites them', async () => {
+    const { env, kv, reader, admin, saveBook } = await withBook();
+    kv.data.set('books', 'garbage');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const notes = await handleRequest(get('/for-you', reader), env, NOW);
+    expect(notes.status).toBe(200);
+    expect(await notes.text()).toContain('<p class="reading-link"><a href="/for-you/reading-room">');
+    expect((await handleRequest(get('/for-you/reading-room', reader), env, NOW)).status).toBe(500);
+    expect(await (await handleRequest(get('/for-you/admin/reading-room', admin.cookie), env, NOW)).text()).toContain('Books could not be read.');
+    expect((await saveBook({ title: 'x', author: 'y', audio: file('a.m4a', 'audio/mp4') })).status).toBe(500);
+    expect(kv.data.get('books')).toBe('garbage');
+  });
+});
