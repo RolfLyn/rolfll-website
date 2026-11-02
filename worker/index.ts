@@ -23,6 +23,11 @@ import {
   EMPTY_BOOK, RECORDING_NEEDED, type Book, type BookDraft,
 } from './books';
 import { readingRoomPage, readingRoomErrorPage, readingRoomAdminPage } from './reading-room-views';
+import {
+  parseLog, parseSettings, addCard, editCard, deleteCard, addComment, removeComment, placeCard, markSeen, mergeList,
+  parseCardForm, parseCommentForm, parseSettingsForm, LIST_LIMITS, NEW_BOX, type ListLog, type Person,
+} from './list';
+import { listPage, listErrorPage, listSettingsPage, type ListDraft } from './list-views';
 import { readerLoginPage, readerPage, errorPage, adminLoginPage, adminPage } from './views';
 import type { Env, KV, R2 } from './types';
 
@@ -39,6 +44,8 @@ const DOOR_COOKIE = 'notes_door';
 const BOOKS_KEY = 'books';
 const PLAYED_KEY = 'books_played';
 const BOOK_REPLIES_KEY = 'book_replies';
+const LIST_KEY: Record<Person, string> = { reader: 'list_reader', admin: 'list_admin' };
+const LIST_SETTINGS_KEY = 'list_settings';
 const FLASH: Record<string, string> = {
   saved: 'Saved.', deleted: 'Deleted.', 'meeting-saved': 'Meeting saved.', 'meeting-removed': 'Meeting removed.',
 };
@@ -116,6 +123,14 @@ async function loadPlayed(kv: KV) {
 // Book replies have the same shape as after dark replies: one per id.
 async function loadBookReplies(kv: KV) {
   return parseEntryReplies(await kv.get(BOOK_REPLIES_KEY));
+}
+
+async function loadList(kv: KV) {
+  const logs: Record<Person, ListLog> = {
+    reader: parseLog(await kv.get(LIST_KEY.reader)),
+    admin: parseLog(await kv.get(LIST_KEY.admin)),
+  };
+  return { logs, settings: parseSettings(await kv.get(LIST_SETTINGS_KEY)) };
 }
 
 // Pages show the notes even when an extra (meetings, replies) cannot be read; that part is left out.
@@ -289,8 +304,11 @@ async function showAfterDark(request: Request, kv: KV, cfg: Config, now: Date, u
   }
   const entries = await tryLoad(() => loadEntries(kv), 'after dark');
   if (!entries) return html(roomErrorPage(), 500);
+  const list = await tryLoad(() => loadList(kv), 'our list');
+  const listView = list && mergeList(list.logs, 'reader', list.settings);
   return html(roomPage({
     entries,
+    list: listView ? { href: `${cfg.base}/after-dark/list`, count: listView.count, fresh: listView.fresh } : undefined,
     replies: await tryLoad(() => loadEntryReplies(kv), 'after dark replies'),
     mediaBase: `${cfg.base}/media`,
     leave: `${cfg.base}/after-dark/leave`,
@@ -722,6 +740,133 @@ async function readingRoomAction(
   return redirect(`${home}?msg=saved`);
 }
 
+function listPaths(cfg: Config, me: Person) {
+  const home = me === 'reader' ? `${cfg.base}/after-dark/list` : `${cfg.base}/admin/after-dark/list`;
+  return { home, action: `${home}/save`, back: me === 'reader' ? `${cfg.base}/after-dark` : `${cfg.base}/admin/after-dark` };
+}
+
+async function renderList(
+  kv: KV, cfg: Config, me: Person, session: string, view: { open?: string; draft?: ListDraft; error?: string }, status = 200,
+): Promise<Response> {
+  const paths = listPaths(cfg, me);
+  const list = await tryLoad(() => loadList(kv), 'our list');
+  if (!list) return html(listErrorPage(paths.back), 500);
+  return html(listPage({
+    view: mergeList(list.logs, me, list.settings),
+    me,
+    settings: list.settings,
+    ...paths,
+    csrf: await csrfToken(session, cfg.secret),
+    ...view,
+  }), status);
+}
+
+async function showList(request: Request, kv: KV, cfg: Config, now: Date, url: URL, me: Person): Promise<Response> {
+  const session = me === 'reader' ? await readerSession(request, cfg, now) : await adminSession(request, cfg, now);
+  if (!session) return html(me === 'reader' ? readerLoginPage({ action: `${cfg.base}/login` }) : adminLoginPage({ action: `${cfg.base}/admin/login` }));
+  if (me === 'reader' && !(await doorOpen(request, cfg, now, session))) return redirect(`${cfg.base}/after-dark`);
+  return renderList(kv, cfg, me, session, { open: url.searchParams.get('open') ?? undefined });
+}
+
+// Saving needs no open door, so a door that closes mid-sentence loses nothing; only a refused save, which would
+// show the page again, checks it. Each person writes only their own log.
+async function listAction(request: Request, kv: KV, cfg: Config, now: Date, me: Person): Promise<Response> {
+  const session = me === 'reader' ? await readerSession(request, cfg, now) : await adminSession(request, cfg, now);
+  if (!session) return redirect(me === 'reader' ? cfg.base : `${cfg.base}/admin`);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  // Throws on corrupt data, before anything is written.
+  const { logs, settings } = await loadList(kv);
+  const log = logs[me];
+  const store = (next: ListLog) => kv.put(LIST_KEY[me], JSON.stringify(next));
+  const { home } = listPaths(cfg, me);
+  const at = now.toISOString();
+  const id = field(form, 'id');
+  const get = (name: string) => field(form, name);
+  const cards = mergeList(logs, me, settings).boxes.flatMap((b) => b.cards);
+  const card = cards.find((c) => c.id === id);
+  const refuse = async (draft: ListDraft, error: string) =>
+    (me === 'reader' && !(await doorOpen(request, cfg, now, session))
+      ? redirect(`${cfg.base}/after-dark`)
+      : renderList(kv, cfg, me, session, { draft, error }, 400));
+
+  switch (field(form, 'do')) {
+    case 'add': {
+      const { draft, error } = parseCardForm(get);
+      const tooMany = log.cards.length >= LIST_LIMITS.cardsPerPerson ? `The list holds ${LIST_LIMITS.cardsPerPerson} cards per person.` : undefined;
+      if (error || tooMany) return refuse({ form: 'add', ...draft }, (error ?? tooMany)!);
+      await store(addCard(log, { id: crypto.randomUUID(), ...draft, at }));
+      return redirect(home);
+    }
+    case 'edit': {
+      if (!card) return notFound();
+      const { draft, error } = parseCardForm(get);
+      if (error) return refuse({ form: 'edit', id, ...draft }, error);
+      await store(editCard(log, { id, ...draft, at }));
+      return redirect(`${home}?open=${id}`);
+    }
+    case 'delete': {
+      if (card) await store(deleteCard(log, id));
+      return redirect(home);
+    }
+    case 'comment': {
+      if (!card) return notFound();
+      const { text, error } = parseCommentForm(get);
+      const tooMany = card.comments.length >= LIST_LIMITS.commentsPerCard ? `A card holds ${LIST_LIMITS.commentsPerCard} comments.` : undefined;
+      if (error || tooMany) return refuse({ form: 'comment', id, title: '', text }, (error ?? tooMany)!);
+      await store(addComment(log, { id: crypto.randomUUID(), card: id, text, at }));
+      return redirect(`${home}?open=${id}`);
+    }
+    case 'uncomment': {
+      const comment = log.comments.find((c) => c.id === id);
+      if (!comment) return notFound();
+      await store(removeComment(log, id));
+      return redirect(`${home}?open=${comment.card}`);
+    }
+    case 'move': {
+      const box = field(form, 'box');
+      if (!card || (box !== NEW_BOX && !settings.boxes.some((b) => b.id === box))) return notFound();
+      const index = Number.parseInt(field(form, 'index'), 10);
+      await store(placeCard(log, id, box, Number.isNaN(index) ? Number.MAX_SAFE_INTEGER : index));
+      return field(form, 'quiet') === '1' ? new Response(null, { status: 204, headers: PAGE_HEADERS }) : redirect(home);
+    }
+    case 'seen': {
+      await store(markSeen(log, at));
+      return field(form, 'quiet') === '1' ? new Response(null, { status: 204, headers: PAGE_HEADERS }) : redirect(home);
+    }
+    default:
+      return notFound();
+  }
+}
+
+async function showListSettings(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
+  const session = await adminSession(request, cfg, now);
+  if (!session) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
+  const msg = url.searchParams.get('msg') ?? '';
+  const settings = await tryLoad(async () => parseSettings(await kv.get(LIST_SETTINGS_KEY)), 'list settings');
+  return html(listSettingsPage({
+    base: cfg.base,
+    csrf: await csrfToken(session, cfg.secret),
+    settings: settings ?? parseSettings(null),
+    flash: Object.hasOwn(FLASH, msg) ? FLASH[msg] : undefined,
+    error: settings ? undefined : 'Settings could not be read.',
+  }));
+}
+
+async function listSettingsAction(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
+  const session = await adminSession(request, cfg, now);
+  if (!session) return redirect(`${cfg.base}/admin`);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  const current = parseSettings(await kv.get(LIST_SETTINGS_KEY));
+  const { settings, error } = parseSettingsForm((name) => field(form, name), current, () => crypto.randomUUID());
+  if (!settings) {
+    return html(listSettingsPage({ base: cfg.base, csrf: await csrfToken(session, cfg.secret), settings: current, error }), 400);
+  }
+  await kv.put(LIST_SETTINGS_KEY, JSON.stringify(settings));
+  return redirect(`${cfg.base}/admin/after-dark/list/settings?msg=saved`);
+}
+
 async function meetingAction(
   request: Request, kv: KV, cfg: Config, now: Date, action: 'save' | 'delete',
 ): Promise<Response> {
@@ -783,6 +928,12 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
       case 'GET /admin/after-dark/preview': return await showAfterDarkPreview(request, kv, cfg, now);
       case 'POST /admin/after-dark/save': return await afterDarkAction(request, env, cfg, now, 'save');
       case 'POST /admin/after-dark/delete': return await afterDarkAction(request, env, cfg, now, 'delete');
+      case 'GET /after-dark/list': return await showList(request, kv, cfg, now, url, 'reader');
+      case 'POST /after-dark/list/save': return await listAction(request, kv, cfg, now, 'reader');
+      case 'GET /admin/after-dark/list': return await showList(request, kv, cfg, now, url, 'admin');
+      case 'POST /admin/after-dark/list/save': return await listAction(request, kv, cfg, now, 'admin');
+      case 'GET /admin/after-dark/list/settings': return await showListSettings(request, kv, cfg, now, url);
+      case 'POST /admin/after-dark/list/settings': return await listSettingsAction(request, kv, cfg, now);
       case 'GET /reading-room': return await showReadingRoom(request, kv, cfg, now, url);
       case 'POST /reading-room/played': return await handlePlayed(request, kv, cfg, now);
       case 'POST /reading-room/reply': return await handleBookReply(request, kv, cfg, now);

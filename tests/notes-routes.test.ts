@@ -938,6 +938,206 @@ describe('equation drawings', () => {
   });
 });
 
+describe('our list', () => {
+  const LIST = '/for-you/after-dark/list';
+  const ADMIN_LIST = '/for-you/admin/after-dark/list';
+
+  async function both() {
+    const ctx = setup();
+    seed(ctx.kv, [{ date: '2026-10-01', text: 'today' }]);
+    const adminCookie = await login(ctx.env, 'admin');
+    const adminToken = await adminCsrf(ctx.env, adminCookie);
+    const readerCookie = await login(ctx.env, 'reader');
+    const readerToken = await readerCsrf(ctx.env, readerCookie);
+    const enter = await handleRequest(post('/for-you/after-dark/enter', { csrf: readerToken }, readerCookie), ctx.env, NOW);
+    const inside = `${readerCookie}; ${enter.headers.get('Set-Cookie')!.split(';')[0]}`;
+    const herDo = (fields: Record<string, string>, when = NOW, cookie = inside) =>
+      handleRequest(post(`${LIST}/save`, { csrf: readerToken, ...fields }, cookie), ctx.env, when);
+    const hisDo = (fields: Record<string, string>, when = NOW) =>
+      handleRequest(post(`${ADMIN_LIST}/save`, { csrf: adminToken, ...fields }, adminCookie), ctx.env, when);
+    const herPage = async (query = '', when = NOW) => (await handleRequest(get(`${LIST}${query}`, inside), ctx.env, when)).text();
+    const hisPage = async (query = '', when = NOW) => (await handleRequest(get(`${ADMIN_LIST}${query}`, adminCookie), ctx.env, when)).text();
+    const log = (who: 'reader' | 'admin') => JSON.parse(ctx.kv.data.get(`list_${who}`) ?? '{"cards":[],"comments":[],"edits":[],"gone":[],"places":[],"seen":""}');
+    return { ...ctx, adminCookie, adminToken, readerCookie, readerToken, inside, herDo, hisDo, herPage, hisPage, log };
+  }
+
+  it('needs her login and an open door to read, and the admin login for his page', async () => {
+    const { env, kv, herDo, readerCookie, log, inside } = await both();
+    await herDo({ do: 'add', title: 'Placeholder card', text: '' });
+    expect(log('reader').cards).toHaveLength(1);
+    expect(await (await handleRequest(get(LIST), env, NOW)).text()).not.toContain('Placeholder card');
+    const closed = await handleRequest(get(LIST, readerCookie), env, NOW);
+    expect(closed.status).toBe(303);
+    expect(closed.headers.get('Location')).toBe('/for-you/after-dark');
+    const open = await handleRequest(get(LIST, inside), env, NOW);
+    expect(open.headers.get('Cache-Control')).toBe('no-store');
+    expect(open.headers.get('X-Robots-Tag')).toBe('noindex, nofollow');
+    expect(await open.text()).toContain('Placeholder card');
+    expect(await (await handleRequest(get(ADMIN_LIST, readerCookie), env, NOW)).text()).toContain('Admin password');
+    expect(kv.data.has('list_admin')).toBe(false);
+  });
+
+  it('refuses a missing session or bad token without writing', async () => {
+    const { env, kv, inside } = await both();
+    expect((await handleRequest(post(`${LIST}/save`, { csrf: 'x', do: 'add', title: 't' }), env, NOW)).headers.get('Location')).toBe('/for-you');
+    expect((await handleRequest(post(`${LIST}/save`, { csrf: 'nope', do: 'add', title: 't' }, inside), env, NOW)).status).toBe(403);
+    expect((await handleRequest(post(`${ADMIN_LIST}/save`, { csrf: 'x', do: 'add', title: 't' }, inside), env, NOW)).headers.get('Location')).toBe('/for-you/admin');
+    expect(kv.data.has('list_reader')).toBe(false);
+    expect(kv.data.has('list_admin')).toBe(false);
+  });
+
+  it('writes each person\'s changes to their own key only, and shows both on both pages', async () => {
+    const { kv, herDo, hisDo, herPage, hisPage, log } = await both();
+    await herDo({ do: 'add', title: 'From reader', text: 'r' });
+    expect(kv.data.has('list_admin')).toBe(false);
+    await hisDo({ do: 'add', title: 'From admin', text: 'a' });
+    expect(log('reader').cards.map((c: { title: string }) => c.title)).toEqual(['From reader']);
+    expect(log('admin').cards.map((c: { title: string }) => c.title)).toEqual(['From admin']);
+    for (const html of [await herPage(), await hisPage()]) {
+      expect(html).toContain('From reader');
+      expect(html).toContain('From admin');
+    }
+  });
+
+  it('lets either person edit any card, last edit winning, without touching the other key', async () => {
+    const { kv, herDo, hisDo, herPage, log } = await both();
+    await herDo({ do: 'add', title: 'Original', text: '' });
+    const id = log('reader').cards[0].id;
+    const before = kv.data.get('list_reader');
+    const res = await hisDo({ do: 'edit', id, title: 'Edited', text: 'more' });
+    expect(res.headers.get('Location')).toBe(`${ADMIN_LIST}?open=${id}`);
+    expect(kv.data.get('list_reader')).toBe(before);
+    const html = await herPage();
+    expect(html).toContain('Edited');
+    expect(html).not.toContain('Original');
+    expect(html).toContain('· edited');
+    await herDo({ do: 'edit', id, title: 'Later', text: '' }, LATER);
+    expect(await herPage()).toContain('Later');
+  });
+
+  it('sorts separately, shows both choices, and marks a match', async () => {
+    const { herDo, hisDo, herPage, hisPage, log } = await both();
+    await herDo({ do: 'add', title: 'A card', text: '' });
+    const id = log('reader').cards[0].id;
+    expect((await herDo({ do: 'move', id, box: 'yes-please', index: '0', quiet: '1' })).status).toBe(204);
+    expect(await herPage()).toContain(`<span data-mine="${id}">You: Yes please</span> · Him: New`);
+    expect((await hisDo({ do: 'move', id, box: 'curious' })).headers.get('Location')).toBe(ADMIN_LIST);
+    expect(await hisPage()).toContain(`<span data-mine="${id}">You: Curious</span> · Her: Yes please`);
+    await hisDo({ do: 'move', id, box: 'yes-please', quiet: '1' });
+    expect(await herPage()).toContain('class="card match"');
+    expect((await herDo({ do: 'move', id, box: 'not-a-box', quiet: '1' })).status).toBe(404);
+    expect((await herDo({ do: 'move', id: '99999999-9999-4999-8999-999999999999', box: 'curious', quiet: '1' })).status).toBe(404);
+  });
+
+  it('adds comments from both, and each person deletes only their own', async () => {
+    const { herDo, hisDo, herPage, log } = await both();
+    await herDo({ do: 'add', title: 'A card', text: '' });
+    const id = log('reader').cards[0].id;
+    expect((await herDo({ do: 'comment', id, text: 'from reader' })).headers.get('Location')).toBe(`${LIST}?open=${id}`);
+    await hisDo({ do: 'comment', id, text: 'from admin' });
+    const html = await herPage();
+    expect(html).toContain('from reader');
+    expect(html).toContain('from admin');
+    expect(html).toContain('2 comments');
+    const hers = log('reader').comments[0].id;
+    const his = log('admin').comments[0].id;
+    expect((await herDo({ do: 'uncomment', id: his })).status).toBe(404);
+    expect((await herDo({ do: 'uncomment', id: hers })).headers.get('Location')).toBe(`${LIST}?open=${id}`);
+    expect(log('reader').comments).toEqual([]);
+    expect(log('admin').comments).toHaveLength(1);
+  });
+
+  it('deletes a card for both, whoever wrote it', async () => {
+    const { herDo, hisDo, herPage, hisPage, log } = await both();
+    await herDo({ do: 'add', title: 'Doomed card', text: '' });
+    const id = log('reader').cards[0].id;
+    expect((await hisDo({ do: 'delete', id })).headers.get('Location')).toBe(ADMIN_LIST);
+    expect(await herPage()).not.toContain('Doomed card');
+    expect(await hisPage()).not.toContain('Doomed card');
+    expect((await herDo({ do: 'comment', id, text: 'too late' })).status).toBe(404);
+  });
+
+  it('rejects bad input keeping what was typed, and enforces the limits', async () => {
+    const { kv, herDo, hisDo, log } = await both();
+    const bad = await herDo({ do: 'add', title: '', text: 'kept words' });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toContain('>kept words</textarea>');
+    expect(kv.data.has('list_reader')).toBe(false);
+    await herDo({ do: 'add', title: 'A card', text: '' });
+    const id = log('reader').cards[0].id;
+    const empty = await herDo({ do: 'comment', id, text: ' ' });
+    expect(empty.status).toBe(400);
+    const long = await hisDo({ do: 'edit', id, title: 'x'.repeat(101), text: '' });
+    expect(long.status).toBe(400);
+    expect((await herDo({ do: 'nonsense' })).status).toBe(404);
+    const many = Array.from({ length: 200 }, (_, i) => ({ id: `${String(i).padStart(8, '0')}-1111-4111-8111-111111111111`, title: 't', text: '', at: NOW.toISOString() }));
+    kv.data.set('list_admin', JSON.stringify({ cards: many, edits: [], comments: [], gone: [], places: [], seen: '' }));
+    expect((await hisDo({ do: 'add', title: 'one more', text: '' })).status).toBe(400);
+  });
+
+  it('saves with the door closed, so nothing typed is lost, but shows nothing', async () => {
+    const { herDo, readerCookie, log } = await both();
+    const late = new Date(NOW.getTime() + 45 * 60_000);
+    const res = await herDo({ do: 'add', title: 'Written slowly', text: '' }, late, readerCookie);
+    expect(res.status).toBe(303);
+    expect(log('reader').cards).toHaveLength(1);
+    const refused = await herDo({ do: 'add', title: '', text: 'x' }, late, readerCookie);
+    expect(refused.status).toBe(303);
+    expect(refused.headers.get('Location')).toBe('/for-you/after-dark');
+    expect(await refused.text()).not.toContain('Written slowly');
+  });
+
+  it('shows the card in the room with a count and a dot until seen', async () => {
+    const { env, hisDo, herDo, inside } = await both();
+    const room = async () => (await handleRequest(get('/for-you/after-dark', inside), env, NOW)).text();
+    expect(await room()).toContain('<a class="list-card" href="/for-you/after-dark/list"><span>Our list</span><span class="list-count">0 cards</span>');
+    await hisDo({ do: 'add', title: 'A card', text: '' });
+    expect(await room()).toContain('<a class="list-card fresh" href="/for-you/after-dark/list"><span>Our list</span><span class="list-count">1 card</span>');
+    expect((await herDo({ do: 'seen', quiet: '1' }, LATER)).status).toBe(204);
+    expect(await room()).toContain('<a class="list-card" href=');
+  });
+
+  it('renames, removes and adds boxes from settings, admin only; a removed box returns its cards to New', async () => {
+    const { env, kv, herDo, herPage, adminCookie, adminToken, inside, log } = await both();
+    await herDo({ do: 'add', title: 'A card', text: '' });
+    await herDo({ do: 'move', id: log('reader').cards[0].id, box: 'curious', quiet: '1' });
+    const settingsPage = await (await handleRequest(get(`${ADMIN_LIST}/settings`, adminCookie), env, NOW)).text();
+    expect(settingsPage).toContain('name="box_curious"');
+    const fields: Record<string, string> = { csrf: adminToken, reader_name: 'R', admin_name: 'S', new_box: 'Added' };
+    for (const box of ['have-to', 'yes-please', 'right-mood', 'just-a-fantasy', 'not-for-me']) fields[`box_${box}`] = box;
+    const res = await handleRequest(post(`${ADMIN_LIST}/settings`, fields, adminCookie), env, NOW);
+    expect(res.headers.get('Location')).toBe(`${ADMIN_LIST}/settings?msg=saved`);
+    const html = await herPage();
+    expect(html).toContain('data-name="Added"');
+    expect(html).not.toContain('data-box="curious"');
+    expect(html).toContain('You: New');
+    expect(html).toContain('S: New');
+    const bad = await handleRequest(post(`${ADMIN_LIST}/settings`, { csrf: adminToken, reader_name: '', admin_name: 'S' }, adminCookie), env, NOW);
+    expect(bad.status).toBe(400);
+    const before = kv.data.get('list_settings');
+    expect((await handleRequest(post(`${ADMIN_LIST}/settings`, { ...fields, new_box: 'nope' }, inside), env, NOW)).headers.get('Location')).toBe('/for-you/admin');
+    expect((await handleRequest(get(`${ADMIN_LIST}/settings`, inside), env, NOW)).status).toBe(200);
+    expect(kv.data.get('list_settings')).toBe(before);
+  });
+
+  it('keeps after dark working with corrupt data and never overwrites it', async () => {
+    const { env, kv, herDo, hisDo, inside, adminCookie } = await both();
+    kv.data.set('list_reader', 'garbage');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const room = await handleRequest(get('/for-you/after-dark', inside), env, NOW);
+    expect(room.status).toBe(200);
+    expect(await room.text()).not.toContain('<a class="list-card');
+    for (const res of [await handleRequest(get(LIST, inside), env, NOW), await handleRequest(get(ADMIN_LIST, adminCookie), env, NOW)]) {
+      expect(res.status).toBe(500);
+      expect(await res.text()).toContain('Something went wrong loading this page.');
+    }
+    expect((await herDo({ do: 'add', title: 'x', text: '' })).status).toBe(500);
+    expect((await hisDo({ do: 'add', title: 'x', text: '' })).status).toBe(500);
+    expect(kv.data.get('list_reader')).toBe('garbage');
+    expect(kv.data.has('list_admin')).toBe(false);
+  });
+});
+
 describe('reading room', () => {
   async function withBook(fields: Record<string, string | File> = {}) {
     const ctx = setup();

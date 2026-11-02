@@ -26,6 +26,9 @@ button { font: inherit; font-size: 1.2rem; padding: 0.55rem 1.6rem; border: 1px 
 .entry .text { font-size: 1.3rem; line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; margin: 0; }
 .entry audio { display: block; width: 100%; margin: 1.25rem 0 0; }
 .quiet { color: var(--muted); font-style: italic; font-size: 1.3rem; }
+.list-card { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 2rem; padding: 0.9rem 1.1rem; border: 1px solid var(--accent); border-radius: 0.8rem; color: var(--accent); font-size: 1.35rem; font-style: italic; text-decoration: none; }
+.list-count { color: var(--muted); font-size: 1.05rem; }
+.list-card.fresh .list-count::after { content: ''; display: inline-block; width: 0.45rem; height: 0.45rem; margin-left: 0.5rem; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); vertical-align: middle; }
 .error { color: var(--accent); font-style: italic; margin: 0; }
 ${REPLY_STYLE}
 .reply textarea { background: #24182a; color: var(--ink); border-color: var(--line); }
@@ -60,9 +63,10 @@ export function doorwayPage({ enter, csrf, back }: { enter: string; csrf: string
 </div>`);
 }
 
-export function roomPage({ entries, replies, mediaBase, leave, reply, unsent, preview = false }: {
+export function roomPage({ entries, replies, mediaBase, leave, reply, unsent, preview = false, list }: {
   entries: Entry[]; replies: EntryReply[] | null; mediaBase: string;
   leave?: string; reply?: ReplyForm; unsent?: string; preview?: boolean;
+  list?: { href: string; count: number; fresh: boolean };
 }): string {
   const form = preview ? undefined : reply;
   const items = entries.map((e) => `<article class="entry">
@@ -73,7 +77,10 @@ ${e.audio ? `<audio controls preload="none" src="${escapeHtml(`${mediaBase}/${e.
   const leaveButton = leave && !preview
     ? `<form method="post" action="${escapeHtml(leave)}"><button type="submit">Leave</button></form>`
     : '';
-  const top = `<div class="top"><h1>after dark</h1>${leaveButton}</div>\n`;
+  const listCard = list
+    ? `<a class="list-card${list.fresh ? ' fresh' : ''}" href="${escapeHtml(list.href)}"><span>Our list</span><span class="list-count">${list.count} ${list.count === 1 ? 'card' : 'cards'}</span></a>\n`
+    : '';
+  const top = `<div class="top"><h1>after dark</h1>${leaveButton}</div>\n${listCard}`;
   const seen = entries[0] && !preview ? `\n<div hidden data-newest="${escapeHtml(entries[0].id)}"></div>\n${MARK_SEEN_SCRIPT}` : '';
   const script = replies && form && entries.length ? `\n${REPLY_SCRIPT}` : '';
   return darkShell(top + (items || '<p class="quiet">Nothing here yet.</p>') + seen + script);
@@ -118,7 +125,7 @@ export function afterDarkAdminPage(d: AfterDarkAdminData): string {
 <h1>After dark</h1>
 ${d.flash ? `<p class="flash">${escapeHtml(d.flash)}</p>` : ''}
 ${errorLine(d.error)}
-<p><a href="${escapeHtml(`${d.base}/admin/after-dark/preview`)}">Preview</a></p>
+<p><a href="${escapeHtml(`${d.base}/admin/after-dark/preview`)}">Preview</a> · <a href="${escapeHtml(`${d.base}/admin/after-dark/list`)}">Our list</a> · <a href="${escapeHtml(`${d.base}/admin/after-dark/list/settings`)}">List settings</a></p>
 <h2>${d.editing ? 'Edit entry' : 'Write an entry'}</h2>
 <form class="write" method="post" enctype="multipart/form-data" action="${escapeHtml(`${d.base}/admin/after-dark/save`)}">
   ${csrf}
