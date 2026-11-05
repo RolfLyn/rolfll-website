@@ -8,7 +8,8 @@ export const EVENT_LIMITS = {
   buyItems: 40, doors: 12, dishes: 8, intro: 6, credits: 40, credit: 300, photoName: 120,
 };
 
-export interface EventDish { id: string; title: string; text: string; photo?: string; buy?: string[] }
+/** `credit` names the photo's author and licence; it shows only once the dish can be seen. */
+export interface EventDish { id: string; title: string; text: string; photo?: string; credit?: string; buy?: string[] }
 export interface EventDoor {
   id: string; label: string; heading: string; opens: string; opensLabel: string;
   doorway?: string; line?: string; dishes?: EventDish[];
@@ -89,6 +90,8 @@ function dishes(v: unknown, where: string, names: Set<string>): EventDish[] {
       if (!names.has(photo)) throw new Problem(`${at} uses photo "${photo}", which hasn't been uploaded.`);
       dish.photo = photo;
     }
+    const credit = text(raw.credit, EVENT_LIMITS.credit, `${at} credit`, true);
+    if (credit !== undefined) dish.credit = credit;
     if (raw.buy !== undefined) {
       dish.buy = list(raw.buy, EVENT_LIMITS.buyItems, `${at} buy`).map((b, j) => text(b, EVENT_LIMITS.buy, `${at} buy item ${j + 1}`)!);
     }
@@ -261,7 +264,13 @@ export function readerEvent(event: SpecialEvent, picks: EventPicks, photos: Even
     if (picked && door.dishes.some((x) => x.id === picked)) door.picked = picked;
     return door;
   });
-  const view: ReaderEvent = { id: event.id, title: event.title, intro: event.intro, doors, credits: event.credits ?? [] };
+  // Credits name the dishes, so a dish's credit waits behind its door like the dish itself.
+  const seen = [
+    ...event.doors.filter((d) => isOpen(d.opens, today)).flatMap((d) => d.dishes ?? []),
+    ...(event.card && isOpen(event.card.opens, today) ? event.card.dishes : []),
+  ];
+  const credits = [...(event.credits ?? []), ...seen.flatMap((d) => (d.credit ? [d.credit] : []))];
+  const view: ReaderEvent = { id: event.id, title: event.title, intro: event.intro, doors, credits };
   if (event.closing) view.closing = event.closing;
   const c = event.card;
   if (c) {

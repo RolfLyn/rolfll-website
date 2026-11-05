@@ -180,6 +180,16 @@ describe('readerEvent', () => {
     expect(view.card && !view.card.locked && view.card.picked).toEqual(['y', 'z']);
   });
 
+  it('gives credits only for dishes she can see, after the general ones', () => {
+    const e = sample();
+    e.doors[0].dishes[0].credit = 'Open photo credit';
+    e.doors[1].dishes[0].credit = 'Locked photo credit';
+    const r = check(e);
+    if (!r.ok) throw new Error(r.error);
+    expect(readerEvent(r.event, EMPTY_PICKS('ev1'), photos, TODAY).credits).toEqual(['Photo by someone, CC BY 2.0', 'Open photo credit']);
+    expect(readerEvent(r.event, EMPTY_PICKS('ev1'), photos, '2026-01-03').credits).toContain('Locked photo credit');
+  });
+
   it('marks opened doors and picks', () => {
     const p = pickDish(openDoor(EMPTY_PICKS('ev1'), 'd1', AT), 'd1', 'b', AT);
     const door = readerEvent(valid(), p, photos, TODAY).doors[0];
