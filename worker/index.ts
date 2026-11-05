@@ -29,6 +29,11 @@ import {
 } from './list';
 import { listPage, listErrorPage, listSettingsPage, type ListDraft } from './list-views';
 import { readerLoginPage, readerPage, errorPage, adminLoginPage, adminPage } from './views';
+import {
+  checkEvent, parseStoredEvent, parsePhotos, parsePicks, openDoor, pickDish, toggleCardItem, isOpen, isShowing,
+  readerEvent, hasWaiting, openPhotoKeys, photoNamesInUse, EMPTY_PICKS, type SpecialEvent, type EventPhoto, type EventPicks,
+} from './event';
+import { eventPage, eventErrorPage, eventAdminPage } from './event-views';
 import type { Env, KV, R2 } from './types';
 
 const NOTES_KEY = 'notes';
@@ -46,7 +51,11 @@ const PLAYED_KEY = 'books_played';
 const BOOK_REPLIES_KEY = 'book_replies';
 const LIST_KEY: Record<Person, string> = { reader: 'list_reader', admin: 'list_admin' };
 const LIST_SETTINGS_KEY = 'list_settings';
+const EVENT_KEY = 'event';
+const EVENT_PICKS_KEY = 'event_picks';
+const EVENT_PHOTOS_KEY = 'event_photos';
 const FLASH: Record<string, string> = {
+  'photos-added': 'Photos added.', 'photo-removed': 'Photo removed.', cleared: 'Her picks are cleared.',
   saved: 'Saved.', deleted: 'Deleted.', 'meeting-saved': 'Meeting saved.', 'meeting-removed': 'Meeting removed.',
 };
 const EXPIRED = 'That form expired. Go back, reload, and try again.';
@@ -86,6 +95,18 @@ export function normalizeBase(raw: string | undefined): string | null {
   let path = raw.trim().replace(/\/+$/, '');
   if (!path.startsWith('/')) path = `/${path}`;
   return path.length > 1 ? path : null;
+}
+
+async function loadEvent(kv: KV): Promise<SpecialEvent | null> {
+  return parseStoredEvent(await kv.get(EVENT_KEY));
+}
+
+async function loadEventPhotos(kv: KV): Promise<EventPhoto[]> {
+  return parsePhotos(await kv.get(EVENT_PHOTOS_KEY));
+}
+
+async function loadEventPicks(kv: KV, eventId: string): Promise<EventPicks> {
+  return parsePicks(await kv.get(EVENT_PICKS_KEY), eventId);
 }
 
 async function loadNotes(kv: KV): Promise<Note[]> {
@@ -229,7 +250,8 @@ async function retireOrphans(env: Env, before: string[], inUse: string[], now: D
 async function keysInUse(kv: KV, notes: Note[], entries?: Entry[], books?: Book[]): Promise<string[]> {
   const others = entries ?? (await tryLoad(() => loadEntries(kv), 'after dark')) ?? [];
   const shelf = books ?? (await tryLoad(() => loadBooks(kv), 'books')) ?? [];
-  return [...notes.flatMap(attachmentKeys), ...entryKeys(others), ...bookKeys(shelf)];
+  const photos = (await tryLoad(() => loadEventPhotos(kv), 'event photos')) ?? [];
+  return [...notes.flatMap(attachmentKeys), ...entryKeys(others), ...bookKeys(shelf), ...photos.map((p) => p.key)];
 }
 
 async function handleLogin(request: Request, kv: KV, cfg: Config, now: Date, role: Role): Promise<Response> {
@@ -257,6 +279,87 @@ async function readerSession(request: Request, cfg: Config, now: Date): Promise<
   return session && (await verifySession(session, 'reader', cfg.secret, now.getTime())) ? session : null;
 }
 
+// The card on her notes page while an event runs; nothing at all if the event can't be read.
+async function eventWayIn(kv: KV, cfg: Config, today: string): Promise<{ href: string; title: string; waiting: boolean } | null> {
+  const event = await tryLoad(() => loadEvent(kv), 'event');
+  if (!event || !isShowing(event, today)) return null;
+  const photos = (await tryLoad(() => loadEventPhotos(kv), 'event photos')) ?? [];
+  const picks = await tryLoad(() => loadEventPicks(kv, event.id), 'event picks');
+  return { href: `${cfg.base}/event`, title: event.title, waiting: Boolean(picks && hasWaiting(readerEvent(event, picks, photos, today))) };
+}
+
+async function showEvent(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
+  const session = await readerSession(request, cfg, now);
+  if (!session) return html(readerLoginPage({ action: `${cfg.base}/login` }));
+  const today = todayInCopenhagen(now);
+  let event: SpecialEvent | null;
+  let photos: EventPhoto[];
+  let picks: EventPicks;
+  try {
+    event = await loadEvent(kv);
+    if (!event || !isShowing(event, today)) return notFound();
+    photos = await loadEventPhotos(kv);
+    picks = await loadEventPicks(kv, event.id);
+  } catch (error) {
+    console.error(error);
+    return html(eventErrorPage(), 500);
+  }
+  // Without JavaScript her door link is how she opens it, so the link records it.
+  const open = url.searchParams.get('open') ?? undefined;
+  const door = event.doors.find((d) => d.id === open);
+  if (door && isOpen(door.opens, today) && !picks.opened[door.id]) {
+    picks = openDoor(picks, door.id, now.toISOString());
+    await kv.put(EVENT_PICKS_KEY, JSON.stringify(picks));
+  }
+  return html(eventPage({
+    view: readerEvent(event, picks, photos, today),
+    home: `${cfg.base}/event`,
+    mediaBase: `${cfg.base}/media`,
+    saveAction: `${cfg.base}/event/save`,
+    csrf: await csrfToken(session, cfg.secret),
+    sheet: open,
+    back: cfg.base,
+  }));
+}
+
+async function handleEventSave(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
+  const session = await readerSession(request, cfg, now);
+  if (!session) return redirect(cfg.base);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  const today = todayInCopenhagen(now);
+  let event: SpecialEvent | null;
+  let picks: EventPicks;
+  try {
+    event = await loadEvent(kv);
+    if (!event || !isShowing(event, today)) return notFound();
+    picks = await loadEventPicks(kv, event.id);
+  } catch (error) {
+    console.error(error);
+    return html(eventErrorPage(), 500);
+  }
+  const what = field(form, 'do');
+  const doorId = field(form, 'door');
+  const dishId = field(form, 'dish');
+  const at = now.toISOString();
+  let next: EventPicks;
+  if (what === 'card') {
+    const card = event.card;
+    if (!card || !isOpen(card.opens, today) || !card.dishes.some((d) => d.id === dishId)) return notFound();
+    const known = { ...picks, card: picks.card.filter((c) => card.dishes.some((d) => d.id === c.dish)) };
+    next = toggleCardItem(known, dishId, card.pick, at);
+  } else {
+    const door = event.doors.find((d) => d.id === doorId);
+    if (!door || !isOpen(door.opens, today)) return notFound();
+    if (what === 'open') next = openDoor(picks, door.id, at);
+    else if (what === 'pick' && door.dishes?.some((d) => d.id === dishId)) next = pickDish(openDoor(picks, door.id, at), door.id, dishId, at);
+    else return notFound();
+  }
+  await kv.put(EVENT_PICKS_KEY, JSON.stringify(next));
+  if (field(form, 'quiet') === '1') return quietDone();
+  return redirect(`${cfg.base}/event?open=${encodeURIComponent(what === 'card' ? 'card' : doorId)}`);
+}
+
 async function showReader(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
   const session = await readerSession(request, cfg, now);
   if (!session) return html(readerLoginPage({ action: `${cfg.base}/login` }));
@@ -267,6 +370,7 @@ async function showReader(request: Request, kv: KV, cfg: Config, now: Date, url:
   const books = await tryLoad(() => loadBooks(kv), 'books');
   const played = await tryLoad(() => loadPlayed(kv), 'played books');
   return html(readerPage({
+    event: await eventWayIn(kv, cfg, today),
     reading: {
       href: `${cfg.base}/reading-room`,
       unread: Boolean(books && played && books.some((b) => !played.some((p) => p.id === b.id))),
@@ -474,6 +578,15 @@ async function showMedia(
   }
   const book = (await tryLoad(() => loadBooks(env.NOTES), 'books'))?.find((b) => b.audio.key === key);
   if (book) return (await serveMedia(env.MEDIA, key, request)) ?? notFound();
+  const photos = (await tryLoad(() => loadEventPhotos(env.NOTES), 'event photos')) ?? [];
+  if (photos.some((p) => p.key === key)) {
+    if (!asAdmin) {
+      const today = todayInCopenhagen(now);
+      const event = await tryLoad(() => loadEvent(env.NOTES), 'event');
+      if (!event || !isShowing(event, today) || !openPhotoKeys(event, photos, today).includes(key)) return notFound();
+    }
+    return (await serveMedia(env.MEDIA, key, request, 'no-store')) ?? notFound();
+  }
   const entry = (await tryLoad(() => loadEntries(env.NOTES), 'after dark'))?.find((e) => e.audio?.key === key);
   if (!entry || (!asAdmin && !(await doorOpen(request, cfg, now, session)))) return notFound();
   return (await serveMedia(env.MEDIA, key, request, 'no-store')) ?? notFound();
@@ -688,6 +801,116 @@ async function showReadingRoomPreview(request: Request, kv: KV, cfg: Config, now
     open: url.searchParams.get('open') ?? undefined,
     preview: `${cfg.base}/admin/reading-room/preview`,
   }));
+}
+
+async function renderEventAdmin(
+  kv: KV, cfg: Config, session: string, view: { text?: string; flash?: string; error?: string }, status = 200,
+): Promise<Response> {
+  const raw = await kv.get(EVENT_KEY);
+  const event = await tryLoad(() => loadEvent(kv), 'event');
+  const photos = (await tryLoad(() => loadEventPhotos(kv), 'event photos')) ?? [];
+  const picks = event ? (await tryLoad(() => loadEventPicks(kv, event.id), 'event picks')) ?? EMPTY_PICKS(event.id) : EMPTY_PICKS('');
+  let text = view.text;
+  if (text === undefined) {
+    try {
+      text = raw ? JSON.stringify(JSON.parse(raw), null, 2) : '';
+    } catch {
+      text = raw ?? '';
+    }
+  }
+  const unreadable = raw !== null && !event ? 'The saved event could not be read. Fix it below and save.' : '';
+  return html(eventAdminPage({
+    base: cfg.base, csrf: await csrfToken(session, cfg.secret), text, event, picks, photos,
+    inUse: event ? photoNamesInUse(event) : [], flash: view.flash,
+    error: [view.error ?? '', unreadable].filter(Boolean).join(' ') || undefined,
+  }), status);
+}
+
+async function showEventAdmin(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
+  const session = await adminSession(request, cfg, now);
+  if (!session) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
+  const msg = url.searchParams.get('msg') ?? '';
+  return renderEventAdmin(kv, cfg, session, { flash: Object.hasOwn(FLASH, msg) ? FLASH[msg] : undefined });
+}
+
+async function showEventPreview(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
+  if (!(await adminSession(request, cfg, now))) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
+  const on = url.searchParams.get('on') ?? '';
+  const day = isValidDate(on) ? on : todayInCopenhagen(now);
+  let event: SpecialEvent | null;
+  let photos: EventPhoto[];
+  try {
+    event = await loadEvent(kv);
+    photos = await loadEventPhotos(kv);
+  } catch (error) {
+    console.error(error);
+    return html(eventErrorPage(), 500);
+  }
+  if (!event) return notFound();
+  const picks = (await tryLoad(() => loadEventPicks(kv, event.id), 'event picks')) ?? EMPTY_PICKS(event.id);
+  return html(eventPage({
+    view: readerEvent(event, picks, photos, day),
+    home: `${cfg.base}/admin/event/preview?on=${day}`,
+    mediaBase: `${cfg.base}/admin/media`,
+    sheet: url.searchParams.get('open') ?? undefined,
+    back: `${cfg.base}/admin/event`,
+    preview: true,
+  }));
+}
+
+async function eventAdminAction(
+  request: Request, env: Env, cfg: Config, now: Date, action: 'save' | 'photos' | 'photo-delete' | 'clear',
+): Promise<Response> {
+  const home = `${cfg.base}/admin/event`;
+  const session = await adminSession(request, cfg, now);
+  if (!session) return redirect(`${cfg.base}/admin`);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  const kv = env.NOTES;
+  if (action === 'clear') {
+    const event = await loadEvent(kv);
+    await kv.put(EVENT_PICKS_KEY, JSON.stringify(EMPTY_PICKS(event?.id ?? '')));
+    return redirect(`${home}?msg=cleared`);
+  }
+  // Throws on corrupt photos before anything is written.
+  const photos = await loadEventPhotos(kv);
+  if (action === 'save') {
+    const text = field(form, 'event');
+    const checked = checkEvent(text, photos);
+    if (!checked.ok) return renderEventAdmin(kv, cfg, session, { text, error: checked.error }, 400);
+    await kv.put(EVENT_KEY, JSON.stringify(checked.event));
+    return redirect(`${home}?msg=saved`);
+  }
+  const notes = await loadNotes(kv);
+  if (action === 'photo-delete') {
+    const photo = photos.find((p) => p.key === field(form, 'key'));
+    if (!photo) return redirect(`${home}?msg=photo-removed`);
+    const event = await tryLoad(() => loadEvent(kv), 'event');
+    if (event && photoNamesInUse(event).includes(photo.name)) {
+      return renderEventAdmin(kv, cfg, session, { error: `"${photo.name}" is in use by the event, so it stays.` }, 400);
+    }
+    await kv.put(EVENT_PHOTOS_KEY, JSON.stringify(photos.filter((p) => p.key !== photo.key)));
+    await retireOrphans(env, [photo.key], await keysInUse(kv, notes), now);
+    return redirect(`${home}?msg=photo-removed`);
+  }
+  const files = form.getAll('photos').filter((f): f is File => typeof f !== 'string' && f.size > 0);
+  if (files.length === 0) return renderEventAdmin(kv, cfg, session, { error: 'Choose at least one photo.' }, 400);
+  const checks = files.map((f) => checkFile('photo', f));
+  const failed = checks.find((c) => !c.ok);
+  if (failed && !failed.ok) return renderEventAdmin(kv, cfg, session, { error: failed.error }, 400);
+  let next = photos;
+  const replaced: string[] = [];
+  for (let i = 0; i < files.length; i++) {
+    const check = checks[i];
+    const stored = await storeUpload(env.MEDIA, 'photo', files[i], check.ok ? check.type : undefined, undefined);
+    if (!stored) continue;
+    const name = files[i].name.slice(0, 120);
+    replaced.push(...next.filter((p) => p.name === name).map((p) => p.key));
+    next = [...next.filter((p) => p.name !== name), { key: stored.key, name }];
+  }
+  await kv.put(EVENT_PHOTOS_KEY, JSON.stringify(next));
+  if (replaced.length) await retireOrphans(env, replaced, await keysInUse(kv, notes), now);
+  return redirect(`${home}?msg=photos-added`);
 }
 
 async function readingRoomAction(
@@ -934,6 +1157,14 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
       case 'POST /admin/after-dark/list/save': return await listAction(request, kv, cfg, now, 'admin');
       case 'GET /admin/after-dark/list/settings': return await showListSettings(request, kv, cfg, now, url);
       case 'POST /admin/after-dark/list/settings': return await listSettingsAction(request, kv, cfg, now);
+      case 'GET /event': return await showEvent(request, kv, cfg, now, url);
+      case 'POST /event/save': return await handleEventSave(request, kv, cfg, now);
+      case 'GET /admin/event': return await showEventAdmin(request, kv, cfg, now, url);
+      case 'GET /admin/event/preview': return await showEventPreview(request, kv, cfg, now, url);
+      case 'POST /admin/event/save': return await eventAdminAction(request, env, cfg, now, 'save');
+      case 'POST /admin/event/photos': return await eventAdminAction(request, env, cfg, now, 'photos');
+      case 'POST /admin/event/photos/delete': return await eventAdminAction(request, env, cfg, now, 'photo-delete');
+      case 'POST /admin/event/clear': return await eventAdminAction(request, env, cfg, now, 'clear');
       case 'GET /reading-room': return await showReadingRoom(request, kv, cfg, now, url);
       case 'POST /reading-room/played': return await handlePlayed(request, kv, cfg, now);
       case 'POST /reading-room/reply': return await handleBookReply(request, kv, cfg, now);
