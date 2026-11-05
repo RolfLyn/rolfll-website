@@ -64,6 +64,11 @@ button { font: inherit; font-size: 1.15rem; padding: 0.55rem 1rem; border: 0; bo
 ${REPLY_STYLE}
 .after-dark-link { text-align: center; margin: 2.75rem 0 0; }
 .after-dark-link a { color: var(--muted); font-style: italic; text-decoration: none; font-size: 1.05rem; }
+.event-link { display: flex; align-items: center; gap: 0.8rem; margin: 0 0 2.25rem; padding: 0.8rem 1rem; border-radius: 0.9rem; background: linear-gradient(135deg, #1b2a3a, #2c4256); color: #f3eadb; text-decoration: none; }
+.event-link svg { flex: 0 0 auto; width: 2.1rem; height: 2.1rem; }
+.event-link .event-title { display: block; font-size: 1.3rem; font-style: italic; color: #f2c879; }
+.event-link .event-hint { display: block; font-size: 1rem; color: #d8cdbd; }
+.event-link.waiting svg { filter: drop-shadow(0 0 6px rgba(242, 200, 121, 0.9)); }
 .reading-link { text-align: center; margin: 2.75rem 0 0; }
 .reading-link + .after-dark-link { margin-top: 1rem; }
 .reading-link a { color: var(--muted); font-style: italic; text-decoration: none; font-size: 1.05rem; }
@@ -335,6 +340,9 @@ function noteText(text: string, cls: string): string {
     .join('\n');
 }
 
+// A little house with a lit door, for the way into a special event.
+const HOUSE_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 14 16 4l12 10" fill="#7c3d30"/><path d="M7 13h18v15H7z" fill="#f4e8d3" stroke="#4a3324" stroke-width="1.5"/><path d="M13 28v-7a3 3 0 0 1 6 0v7z" fill="#f2c879"/></svg>';
+
 // A small open book for the reading room link.
 const BOOK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M12 6.5C10 5 7 4.5 3.5 5v13c3.5-.5 6.5 0 8.5 1.5 2-1.5 5-2 8.5-1.5V5C17 4.5 14 5 12 6.5z"/><path d="M12 6.5v13"/></svg>';
 
@@ -350,10 +358,11 @@ const UNREAD_SCRIPT = `<script>
 })();
 </script>`;
 
-export function readerPage({ current, archive, mediaBase, preview = false, sky = null, replies = null, reply, unsent, afterDark = null, reading = null }: {
+export function readerPage({ current, archive, mediaBase, preview = false, sky = null, replies = null, reply, unsent, afterDark = null, reading = null, event = null }: {
   current: Note | null; archive: Note[]; mediaBase: string; preview?: boolean; sky?: Sky | null;
   replies?: Reply[] | null; reply?: ReplyForm; unsent?: string; afterDark?: { href: string; newest: string } | null;
   reading?: { href: string; unread: boolean } | null;
+  event?: { href: string; title: string; waiting: boolean } | null;
 }): string {
   const form = preview ? undefined : reply;
   const area = (n: Note) => (replies ? replyArea({ field: 'date', value: n.date, anchor: `note-${n.date}` }, replies.find((r) => r.date === n.date), form, unsent === n.date) : '');
@@ -390,11 +399,15 @@ ${UNREAD_SCRIPT}`
     ? `
 <p class="reading-link"><a href="${escapeHtml(reading.href)}"${reading.unread ? ' class="unread"' : ''}>${BOOK_ICON}The reading room</a></p>`
     : '';
+  const way = event
+    ? `<a class="event-link${event.waiting ? ' waiting' : ''}" href="${escapeHtml(event.href)}">${HOUSE_ICON}<span><span class="event-title">${escapeHtml(event.title)}</span><span class="event-hint">${event.waiting ? 'A door is waiting for you' : 'Open the calendar'}</span></span></a>
+`
+    : '';
   const drawn = [current, ...archive].some((n) => n && hasDrawings(n.text));
   const equations = drawn ? `
 <style>${EQUATION_STYLE}</style>
 ${equationScript()}` : '';
-  return readerShell(top + today + room + door + past + game + replyScript + equations);
+  return readerShell(top + way + today + room + door + past + game + replyScript + equations);
 }
 
 export function errorPage(message: string): string {
