@@ -346,7 +346,7 @@ async function handleEventSave(request: Request, kv: KV, cfg: Config, now: Date)
   if (what === 'card') {
     const card = event.card;
     if (!card || !isOpen(card.opens, today) || !card.dishes.some((d) => d.id === dishId)) return notFound();
-    const known = { ...picks, card: picks.card.filter((c) => card.dishes.some((d) => d.id === c.dish)) };
+    const known = { ...picks, card: picks.card.filter((c) => card.dishes.some((d) => d.id === c.dish)).slice(-card.pick) };
     next = toggleCardItem(known, dishId, card.pick, at);
   } else {
     const door = event.doors.find((d) => d.id === doorId);

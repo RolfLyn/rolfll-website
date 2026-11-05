@@ -103,17 +103,26 @@ export const EVENT_SCRIPT = `<script>
     var xhr = new XMLHttpRequest();
     xhr.open('POST', save);
     xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    var finished = false;
+    // On a failure nothing queued behind it is sent either, so every one of those changes is put back,
+    // newest first: each snapshot was taken just before its own change.
     function done(ok) {
+      if (finished) return;
+      finished = true;
       busy = false;
-      if (!ok && job.undo) {
+      if (!ok) {
+        var dropped = queue;
         queue = [];
-        job.undo();
-        say("That didn't save. Try again?");
+        for (var d = dropped.length - 1; d >= 0; d--) if (dropped[d].undo) dropped[d].undo();
+        if (job.undo) job.undo();
+        if (job.undo || dropped.length) say("That didn't save. Try again?");
       }
       next();
     }
+    xhr.timeout = 15000;
     xhr.onload = function () { done(xhr.status === 204); };
     xhr.onerror = function () { done(false); };
+    xhr.ontimeout = function () { done(false); };
     xhr.send(body.join('&'));
   }
   function send(fields, undo) { queue.push({ fields: fields, undo: undo }); next(); }

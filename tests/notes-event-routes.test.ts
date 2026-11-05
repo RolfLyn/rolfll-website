@@ -160,6 +160,13 @@ describe('special event routes', () => {
     expect((await her({ do: 'pick', door: 'd2', dish: 'c' }, LATER)).status).toBe(303);
   });
 
+  it('trims stored card picks to the current limit before a tap, as her page shows them', async () => {
+    const { her, picks, kv } = await withEvent();
+    kv.data.set('event_picks', JSON.stringify({ event: 'ev1', opened: {}, doors: {}, card: ['x', 'y', 'z'].map((dish) => ({ dish, at: NOW.toISOString() })) }));
+    await her({ do: 'card', dish: 'x', quiet: '1' });
+    expect(picks().card.map((c: { dish: string }) => c.dish)).toEqual(['z', 'x']);
+  });
+
   it('keeps the card to its limit', async () => {
     const { her, picks } = await withEvent();
     for (const dish of ['x', 'y', 'z']) await her({ do: 'card', dish, quiet: '1' });
