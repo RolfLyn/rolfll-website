@@ -1,6 +1,6 @@
 import { todayInCopenhagen } from './dates';
 import {
-  escapeHtml, formatDate, formatStamp, shell, READER_FONTS, adminShell, errorLine, replyArea, replyLine,
+  escapeHtml, formatDate, formatStamp, listeningShell, adminShell, errorLine, replyArea, replyLine,
   REPLY_STYLE, type ReplyForm,
 } from './views';
 import { BOOK_LIMITS, spineLook, type Book, type BookDraft, type Played } from './books';
@@ -179,7 +179,7 @@ export const ROOM_SCRIPT = `<script>
 const LONG_TITLE = 12;
 
 function roomShell(body: string): string {
-  return shell('The reading room', ROOM_STYLE, body, READER_FONTS);
+  return listeningShell('The reading room', ROOM_STYLE, body);
 }
 
 function readOn(book: Book): string {

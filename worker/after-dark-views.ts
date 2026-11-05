@@ -1,6 +1,6 @@
 import { todayInCopenhagen } from './dates';
 import {
-  escapeHtml, formatDate, shell, READER_FONTS, adminShell, errorLine, replyArea, replyLine,
+  escapeHtml, formatDate, listeningShell, adminShell, errorLine, replyArea, replyLine,
   REPLY_STYLE, REPLY_SCRIPT, type ReplyForm,
 } from './views';
 import { ENTRY_LIMITS, type Entry, type EntryDraft, type EntryReply } from './after-dark';
@@ -48,7 +48,7 @@ const MARK_SEEN_SCRIPT = `<script>
 </script>`;
 
 function darkShell(body: string): string {
-  return shell('after dark', AFTER_DARK_STYLE, body, READER_FONTS);
+  return listeningShell('after dark', AFTER_DARK_STYLE, body);
 }
 
 function entryDate(entry: Entry): string {

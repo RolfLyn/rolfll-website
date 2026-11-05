@@ -189,7 +189,68 @@ export const READER_FONTS = `<link rel="preconnect" href="https://fonts.googleap
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&display=swap">`;
 
 function readerShell(body: string): string {
-  return shell('For you', READER_STYLE, body, READER_FONTS);
+  return listeningShell('For you', READER_STYLE, body);
+}
+
+// Keeps her screen on while a sound is playing. The system drops the lock whenever the page is hidden,
+// so it is taken again when she comes back. Some iPhones have only allowed the lock straight after a tap,
+// and taps on the player itself may never reach the page, so any tap on the page also takes it, ready for
+// the player, and it is let go if nothing plays for a while. Without the Wake Lock API the phone just
+// sleeps as it always has, and the sound keeps playing.
+export const KEEP_AWAKE_SCRIPT = `<script>
+(function () {
+  if (!navigator.wakeLock) return;
+  var WAIT = 30000;
+  var lock = null;
+  var asking = false;
+  var timer = null;
+  function playing() {
+    var audios = document.querySelectorAll('audio');
+    for (var i = 0; i < audios.length; i++) if (!audios[i].paused && !audios[i].ended) return true;
+    return false;
+  }
+  function letGo() {
+    if (!lock) return;
+    var held = lock;
+    lock = null;
+    held.release().then(null, function () {});
+  }
+  function wait() {
+    clearTimeout(timer);
+    timer = setTimeout(function () {
+      timer = null;
+      if (!playing()) letGo();
+    }, WAIT);
+  }
+  function hold() {
+    if (lock || asking || document.visibilityState !== 'visible') return;
+    asking = true;
+    navigator.wakeLock.request('screen').then(function (held) {
+      asking = false;
+      lock = held;
+      held.addEventListener('release', function () { if (lock === held) lock = null; });
+      if (!timer && !playing()) letGo();
+    }, function () { asking = false; });
+  }
+  function check() {
+    if (playing()) hold();
+    else if ((lock || asking) && !timer) wait();
+  }
+  function tapped() {
+    wait();
+    hold();
+  }
+  var events = ['play', 'playing', 'pause', 'ended'];
+  for (var e = 0; e < events.length; e++) document.addEventListener(events[e], check, true);
+  document.addEventListener('visibilitychange', check);
+  document.addEventListener('touchend', tapped, true);
+  document.addEventListener('click', tapped, true);
+})();
+</script>`;
+
+// A reader page, which keeps the screen on while one of its sounds plays.
+export function listeningShell(title: string, style: string, body: string): string {
+  return shell(title, style, body.includes('<audio') ? body + KEEP_AWAKE_SCRIPT : body, READER_FONTS);
 }
 
 export function adminShell(body: string): string {
