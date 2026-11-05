@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { eventPage, eventErrorPage, EVENT_SCRIPT } from '../worker/event-views';
+import { eventPage, eventErrorPage, eventAdminPage, EVENT_SCRIPT } from '../worker/event-views';
 import { readerPage } from '../worker/views';
 import {
   checkEvent, readerEvent, EMPTY_PICKS, openDoor, pickDish, toggleCardItem, type EventPhoto, type SpecialEvent,
@@ -148,5 +148,58 @@ describe('the way in from the notes page', () => {
   });
   it('is absent without an event', () => {
     expect(readerPage(base)).not.toContain('event-link"');
+  });
+});
+
+describe('event admin page', () => {
+  const ev = event((e) => { e.doors[0].dishes[0].buy = ['Secret <item>', 'Second item']; });
+  const picks = toggleCardItem(pickDish(openDoor(openDoor(EMPTY_PICKS('ev1'), 'd1', AT), 'd3', AT), 'd1', 'a', AT), 'y', 2, AT);
+  const admin = (extra: Partial<Parameters<typeof eventAdminPage>[0]> = {}) => eventAdminPage({
+    base: '/for-you', csrf: 'tok', text: '{"id":"<script>"}', event: ev, picks, photos, inUse: ['one.jpg'], ...extra,
+  });
+
+  it('holds the JSON escaped, an error line and a photo upload form', () => {
+    const html = admin({ error: 'Door "d9" <bad>' });
+    expect(html).toContain('<textarea name="event"');
+    expect(html).toContain('{&quot;id&quot;:&quot;&lt;script&gt;&quot;}');
+    expect(html).toContain('Door &quot;d9&quot; &lt;bad&gt;');
+    expect(html).toContain('enctype="multipart/form-data"');
+    expect(html).toContain('name="photos" accept="image/*" multiple');
+  });
+
+  it('lists photos and offers Remove only for unused ones', () => {
+    const html = admin();
+    expect(html).toContain('one.jpg');
+    expect(html).toContain('two.jpg');
+    expect(html).not.toMatch(/value="11111111-1111-4111-8111-111111111111\.jpg"><button[^>]*>Remove/);
+    expect(html).toMatch(/value="22222222-2222-4222-8222-222222222222\.jpg"><button[^>]*>Remove/);
+  });
+
+  it('shows her picks with their shopping lists, escaped', () => {
+    const html = admin();
+    expect(html).toContain('Dish &lt;script&gt;A');
+    expect(html).toContain('<li>Secret &lt;item&gt;</li>');
+    expect(html).toContain('<li>Second item</li>');
+    expect(html).toContain('Not opened yet');
+    expect(html).toContain('Opened');
+    expect(html).toContain('Sweet Y');
+  });
+
+  it('a door opened without a pick says so', () => {
+    const html = admin({ picks: openDoor(EMPTY_PICKS('ev1'), 'd1', AT) });
+    expect(html).toContain('Opened, nothing picked yet');
+  });
+
+  it('offers a preview by date and a clear with confirmation', () => {
+    const html = admin();
+    expect(html).toContain('action="/for-you/admin/event/preview"');
+    expect(html).toContain('<input type="date" name="on"');
+    expect(html).toContain('action="/for-you/admin/event/clear"');
+    expect(html).toContain("confirm('Clear all her picks?')");
+  });
+
+  it('works with no event yet', () => {
+    const html = admin({ event: null, text: '', picks: EMPTY_PICKS('') });
+    expect(html).toContain('No event yet');
   });
 });

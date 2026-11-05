@@ -1,5 +1,5 @@
-import { escapeHtml, shell, READER_FONTS } from './views';
-import type { ReaderEvent, ReaderDoor, ReaderDish } from './event';
+import { escapeHtml, shell, READER_FONTS, adminShell, errorLine, formatStamp } from './views';
+import type { ReaderEvent, ReaderDoor, ReaderDish, EventDish, EventPhoto, EventPicks, SpecialEvent } from './event';
 
 const EVENT_STYLE = `
 :root { --paper: #fbf5ea; --ink: #3a2e28; --muted: #8c7b6c; --accent: #b0645a; --line: #e4d8c4; --timber: #4a3324; --plaster: #f4e8d3; --gold: #f2c879; --cream: #f3eadb; }
@@ -340,4 +340,66 @@ ${sheets.join('\n')}
 
 export function eventErrorPage(): string {
   return shell('Our calendar', EVENT_STYLE, '<p class="quiet">Something went wrong loading this page.</p>', READER_FONTS);
+}
+
+function buyList(dish: EventDish): string {
+  return dish.buy?.length ? `<ul class="buy">${dish.buy.map((b) => `<li>${escapeHtml(b)}</li>`).join('')}</ul>` : '';
+}
+
+function pickRow(heading: string, dish: EventDish | undefined, at: string | undefined, status: string): string {
+  const what = dish
+    ? `<strong>${escapeHtml(dish.title)}</strong>${at ? ` <span class="hint">picked ${escapeHtml(formatStamp(at))}</span>` : ''}${buyList(dish)}`
+    : `<span class="hint">${escapeHtml(status)}</span>`;
+  return `<li><p class="text">${escapeHtml(heading)}</p>${what}</li>`;
+}
+
+export function eventAdminPage(d: {
+  base: string; csrf: string; text: string; event: SpecialEvent | null; picks: EventPicks;
+  photos: EventPhoto[]; inUse: string[]; flash?: string; error?: string;
+}): string {
+  const csrf = `<input type="hidden" name="csrf" value="${escapeHtml(d.csrf)}">`;
+  const at = (path: string) => escapeHtml(`${d.base}/admin/event${path}`);
+  let picks = '<p>No event yet. Paste one below and save.</p>';
+  if (d.event) {
+    const rows = d.event.doors.map((door, i) => {
+      const choice = d.picks.doors[door.id];
+      const dish = door.dishes?.find((x) => x.id === choice?.dish);
+      const status = !d.picks.opened[door.id] ? 'Not opened yet' : door.dishes?.length ? 'Opened, nothing picked yet' : 'Opened';
+      return pickRow(`Door ${i + 1}: ${door.heading}`, dish, choice?.at, status);
+    });
+    const card = d.event.card;
+    if (card) {
+      const chosen = d.picks.card.map((c) => ({ c, dish: card.dishes.find((x) => x.id === c.dish) })).filter((x) => x.dish).slice(-card.pick);
+      rows.push(chosen.length
+        ? chosen.map(({ c, dish }) => pickRow(card.title, dish, c.at, '')).join('\n')
+        : pickRow(card.title, undefined, undefined, 'Nothing picked yet'));
+    }
+    picks = `<ul>${rows.join('\n')}</ul>`;
+  }
+  const photoRows = d.photos.map((p) => `<li><span>${escapeHtml(p.name)}</span>${d.inUse.includes(p.name)
+    ? ' <span class="tag">In use</span>'
+    : ` <form method="post" action="${at('/photos/delete')}">${csrf}<input type="hidden" name="key" value="${escapeHtml(p.key)}"><button type="submit">Remove</button></form>`}</li>`).join('\n');
+  return adminShell(`
+<p><a href="${escapeHtml(`${d.base}/admin`)}">← Notes</a></p>
+<h1>Special event</h1>
+${d.flash ? `<p class="flash">${escapeHtml(d.flash)}</p>` : ''}
+${errorLine(d.error)}
+<form method="get" action="${at('/preview')}"><label>Preview as of <input type="date" name="on"></label> <button type="submit">Preview</button></form>
+<h2>Her picks</h2>
+${picks}
+<form method="post" action="${at('/clear')}" onsubmit="return confirm('Clear all her picks?')">${csrf}<button type="submit">Clear her picks</button></form>
+<h2>The event</h2>
+<form class="write" method="post" action="${at('/save')}">
+  ${csrf}
+  <textarea name="event" rows="24" spellcheck="false" placeholder="The event as JSON">${escapeHtml(d.text)}</textarea>
+  <button type="submit">Save</button>
+</form>
+<h2>Photos</h2>
+<form class="write" method="post" enctype="multipart/form-data" action="${at('/photos')}">
+  ${csrf}
+  <label class="file">Add photos<input type="file" name="photos" accept="image/*" multiple required></label>
+  <p class="hint">Use a photo in the event by its name, like "photo": "name.jpg".</p>
+  <button type="submit">Upload</button>
+</form>
+<ul>${photoRows || '<li>No photos yet.</li>'}</ul>`);
 }

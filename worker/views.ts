@@ -498,7 +498,7 @@ export function adminPage(d: AdminPageData): string {
 
   return adminShell(`
 <h1>Notes</h1>
-<p><a href="${escapeHtml(`${d.base}/admin/after-dark`)}">After dark ☾</a> · <a href="${escapeHtml(`${d.base}/admin/reading-room`)}">Reading room</a></p>
+<p><a href="${escapeHtml(`${d.base}/admin/after-dark`)}">After dark ☾</a> · <a href="${escapeHtml(`${d.base}/admin/reading-room`)}">Reading room</a> · <a href="${escapeHtml(`${d.base}/admin/event`)}">Special event</a></p>
 ${d.flash ? `<p class="flash">${escapeHtml(d.flash)}</p>` : ''}
 ${errorLine(d.error)}
 <h2>Showing today (${formatDate(d.today)})</h2>
