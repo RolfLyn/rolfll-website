@@ -4,7 +4,7 @@ import type { ReaderEvent, ReaderDoor, ReaderDish, EventDish, EventPhoto, EventP
 const EVENT_STYLE = `
 :root { --paper: #fbf5ea; --ink: #3a2e28; --muted: #8c7b6c; --accent: #b0645a; --line: #e4d8c4; --timber: #4a3324; --plaster: #f4e8d3; --gold: #f2c879; --cream: #f3eadb; }
 * { box-sizing: border-box; }
-body { margin: 0; min-height: 100vh; background: linear-gradient(#16222f 0%, #24384b 40rem, #34495c 100%) fixed; background-color: #16222f; color: var(--cream); font-family: 'Cormorant Garamond', Georgia, serif; overflow-x: hidden; }
+body { margin: 0; min-height: 100vh; background: linear-gradient(#16222f 0, #24384b 40rem, #2c4155 100%); background-color: #16222f; color: var(--cream); font-family: 'Cormorant Garamond', Georgia, serif; overflow-x: hidden; }
 main { max-width: 30rem; margin: 0 auto; padding: 1.25rem 1.25rem 3rem; position: relative; z-index: 1; }
 .back { color: #c9b9a3; font-style: italic; font-size: 1.05rem; }
 .intro { text-align: center; margin: 1.5rem 0 0; }
