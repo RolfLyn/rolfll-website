@@ -393,6 +393,24 @@ describe('media', () => {
     expect(media.objects.size).toBe(0);
   });
 
+  it('puts a new note live at 4am Singapore time, with its photo and reply', async () => {
+    const { env, kv } = setup();
+    const { save } = await adminWith(env);
+    await save({ date: '2026-10-02', text: 'NEW DAY', photo: file('p.jpg', 'image/jpeg') });
+    const key = stored(kv)[0].photo.key;
+    const reader = await login(env, 'reader');
+    const before = new Date('2026-10-01T19:59:00Z');
+    const after = new Date('2026-10-01T20:00:00Z');
+    expect(await (await handleRequest(get('/for-you', reader), env, before)).text()).not.toContain('NEW DAY');
+    expect((await handleRequest(get(`/for-you/media/${key}`, reader), env, before)).status).toBe(404);
+    const page = await (await handleRequest(get('/for-you', reader), env, after)).text();
+    expect(page).toContain('NEW DAY');
+    expect((await handleRequest(get(`/for-you/media/${key}`, reader), env, after)).status).toBe(200);
+    const csrf = page.match(/name="csrf" value="([^"]+)"/)![1];
+    await handleRequest(post('/for-you/reply', { csrf, date: '2026-10-02', heart: 'on', text: 'yes' }, reader), env, after);
+    expect(kv.data.get('replies')).toContain('2026-10-02');
+  });
+
   it('only serves media to the right people at the right time', async () => {
     const { env, kv } = setup();
     const { save, cookie: admin } = await adminWith(env);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { todayInCopenhagen, isValidDate, addDays, nextEmptyDate } from '../worker/dates';
+import { todayInCopenhagen, noteDay, isValidDate, addDays, nextEmptyDate } from '../worker/dates';
 
 describe('todayInCopenhagen', () => {
   it('uses summer time (UTC+2) in summer', () => {
@@ -15,6 +15,15 @@ describe('todayInCopenhagen', () => {
   it('handles the DST switch days', () => {
     expect(todayInCopenhagen(new Date('2026-03-28T23:30:00Z'))).toBe('2026-03-29');
     expect(todayInCopenhagen(new Date('2026-10-25T22:30:00Z'))).toBe('2026-10-25');
+  });
+});
+
+describe('noteDay', () => {
+  it('turns to the next day at 4am in Singapore (20:00 UTC), all year round', () => {
+    expect(noteDay(new Date('2026-10-01T19:59:00Z'))).toBe('2026-10-01');
+    expect(noteDay(new Date('2026-10-01T20:00:00Z'))).toBe('2026-10-02');
+    expect(noteDay(new Date('2026-12-31T19:59:00Z'))).toBe('2026-12-31');
+    expect(noteDay(new Date('2026-12-31T20:00:00Z'))).toBe('2027-01-01');
   });
 });
 

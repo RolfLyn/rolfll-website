@@ -1,4 +1,4 @@
-import { todayInCopenhagen, isValidDate, nextEmptyDate } from './dates';
+import { todayInCopenhagen, noteDay, isValidDate, nextEmptyDate } from './dates';
 import {
   parseNotes, selectForReader, upsertNote, removeNote, attachmentKeys, findByMediaKey, MEDIA_KEY,
   type Note, type Attachment,
@@ -409,6 +409,7 @@ async function showReader(request: Request, kv: KV, cfg: Config, now: Date, url:
   const session = await readerSession(request, cfg, now);
   if (!session) return html(readerLoginPage({ action: `${cfg.base}/login` }));
   const today = todayInCopenhagen(now);
+  const day = noteDay(now);
   const notes = await loadNotes(kv);
   const meetings = await tryLoad(() => loadMeetings(kv), 'meetings');
   const entries = await tryLoad(() => loadEntries(kv), 'after dark');
@@ -420,9 +421,9 @@ async function showReader(request: Request, kv: KV, cfg: Config, now: Date, url:
       href: `${cfg.base}/reading-room`,
       unread: Boolean(books && played && books.some((b) => !played.some((p) => p.id === b.id))) || await keepsakesWaiting(kv, cfg),
     },
-    ...selectForReader(notes, today),
+    ...selectForReader(notes, day),
     mediaBase: `${cfg.base}/media`,
-    sky: meetings && skyFor(notes, meetings, today),
+    sky: meetings && skyFor(notes, meetings, day),
     replies: await tryLoad(() => loadReplies(kv), 'replies'),
     reply: { action: `${cfg.base}/reply`, csrf: await csrfToken(session, cfg.secret) },
     unsent: url.searchParams.get('unsent') ?? undefined,
@@ -436,7 +437,7 @@ async function handleReply(request: Request, kv: KV, cfg: Config, now: Date): Pr
   const form = await readForm(request);
   if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
   const date = field(form, 'date');
-  const today = todayInCopenhagen(now);
+  const today = noteDay(now);
   if (!(await loadNotes(kv)).some((n) => n.date === date && n.date <= today)) return notFound();
   const answer = parseReplyForm((name) => field(form, name));
   if (!answer) return redirect(`${cfg.base}?unsent=${date}#note-${date}`);
@@ -589,7 +590,7 @@ interface AdminView {
 async function renderAdmin(
   kv: KV, notes: Note[], cfg: Config, now: Date, session: string, view: AdminView, status = 200,
 ): Promise<Response> {
-  const today = todayInCopenhagen(now);
+  const today = noteDay(now);
   const meetings = await tryLoad(() => loadMeetings(kv), 'meetings');
   const replies = await tryLoad(() => loadReplies(kv), 'replies');
   const problems = [meetings ? '' : 'Meetings could not be read.', replies ? '' : 'Replies could not be read.'];
@@ -608,7 +609,7 @@ async function renderAdmin(
 }
 
 function freshForm(notes: Note[], now: Date): Note {
-  return { date: nextEmptyDate(notes.map((n) => n.date), todayInCopenhagen(now)), text: '' };
+  return { date: nextEmptyDate(notes.map((n) => n.date), noteDay(now)), text: '' };
 }
 
 async function adminSession(request: Request, cfg: Config, now: Date): Promise<string | null> {
@@ -647,7 +648,7 @@ async function showMedia(
   if (!session) return notFound();
   const note = findByMediaKey(await loadNotes(env.NOTES), key);
   if (note) {
-    if (!asAdmin && note.date > todayInCopenhagen(now)) return notFound();
+    if (!asAdmin && note.date > noteDay(now)) return notFound();
     return (await serveMedia(env.MEDIA, key, request)) ?? notFound();
   }
   const keepsake = (await tryLoad(() => loadSongs(env.NOTES), 'songs'))?.some((x) => x.audio.key === key) ||

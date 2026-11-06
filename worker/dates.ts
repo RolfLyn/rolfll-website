@@ -2,8 +2,17 @@ const TIME_ZONE = 'Europe/Copenhagen';
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export function todayInCopenhagen(now: Date = new Date()): string {
+  return dateIn(TIME_ZONE, now);
+}
+
+/** The day her daily notes are on: each new note goes live at 4am in Singapore. */
+export function noteDay(now: Date = new Date()): string {
+  return dateIn('Asia/Singapore', new Date(now.getTime() - 4 * 3_600_000));
+}
+
+function dateIn(timeZone: string, now: Date): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: TIME_ZONE,
+    timeZone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
