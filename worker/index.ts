@@ -22,7 +22,12 @@ import {
   parseBooks, upsertBook, removeBook, bookKeys, parseBookForm, parsePlayed, markPlayed, dropPlayed,
   EMPTY_BOOK, RECORDING_NEEDED, type Book, type BookDraft,
 } from './books';
-import { readingRoomPage, readingRoomErrorPage, readingRoomAdminPage } from './reading-room-views';
+import { readingRoomPage, readingRoomErrorPage, readingRoomAdminPage, type Keepsakes } from './reading-room-views';
+import {
+  parseSongs, upsertSong, removeSong, songKeys, parseAlbum, upsertPhoto, removePhoto, movePhoto, albumKeys,
+  parseSongForm, parsePhotoForm, parseSeen, albumHasNew, songsUnplayed, EMPTY_SONG, SONG_FILE_NEEDED, PHOTO_FILE_NEEDED,
+  type Song, type AlbumPhoto, type SongDraft,
+} from './keepsakes';
 import {
   parseLog, parseSettings, addCard, editCard, deleteCard, addComment, removeComment, placeCard, markSeen, mergeList,
   parseCardForm, parseCommentForm, parseSettingsForm, LIST_LIMITS, NEW_BOX, type ListLog, type Person,
@@ -49,6 +54,10 @@ const DOOR_COOKIE = 'notes_door';
 const BOOKS_KEY = 'books';
 const PLAYED_KEY = 'books_played';
 const BOOK_REPLIES_KEY = 'book_replies';
+const SONGS_KEY = 'records';
+const SONGS_PLAYED_KEY = 'records_played';
+const ALBUM_KEY = 'album';
+const ALBUM_SEEN_KEY = 'album_seen';
 const LIST_KEY: Record<Person, string> = { reader: 'list_reader', admin: 'list_admin' };
 const LIST_SETTINGS_KEY = 'list_settings';
 const EVENT_KEY = 'event';
@@ -135,6 +144,32 @@ async function loadEntryReplies(kv: KV) {
 
 async function loadBooks(kv: KV): Promise<Book[]> {
   return parseBooks(await kv.get(BOOKS_KEY));
+}
+
+async function loadSongs(kv: KV): Promise<Song[]> {
+  return parseSongs(await kv.get(SONGS_KEY));
+}
+
+async function loadSongsPlayed(kv: KV) {
+  return parsePlayed(await kv.get(SONGS_PLAYED_KEY));
+}
+
+async function loadAlbum(kv: KV): Promise<AlbumPhoto[]> {
+  return parseAlbum(await kv.get(ALBUM_KEY));
+}
+
+// The sideboard's songs and album for her page; null when either can't be read, so only the sideboard is missing.
+async function loadKeepsakes(kv: KV, cfg: Config): Promise<Keepsakes | null> {
+  const songs = await tryLoad(() => loadSongs(kv), 'songs');
+  const album = await tryLoad(() => loadAlbum(kv), 'album');
+  if (!songs || !album) return null;
+  return {
+    songs, album,
+    songsPlayed: (await tryLoad(() => loadSongsPlayed(kv), 'song play times')) ?? [],
+    albumSeen: parseSeen(await kv.get(ALBUM_SEEN_KEY)),
+    songPlayAction: `${cfg.base}/reading-room/song-played`,
+    albumSeenAction: `${cfg.base}/reading-room/album-seen`,
+  };
 }
 
 async function loadPlayed(kv: KV) {
@@ -251,7 +286,12 @@ async function keysInUse(kv: KV, notes: Note[], entries?: Entry[], books?: Book[
   const others = entries ?? (await tryLoad(() => loadEntries(kv), 'after dark')) ?? [];
   const shelf = books ?? (await tryLoad(() => loadBooks(kv), 'books')) ?? [];
   const photos = (await tryLoad(() => loadEventPhotos(kv), 'event photos')) ?? [];
-  return [...notes.flatMap(attachmentKeys), ...entryKeys(others), ...bookKeys(shelf), ...photos.map((p) => p.key)];
+  const songs = (await tryLoad(() => loadSongs(kv), 'songs')) ?? [];
+  const album = (await tryLoad(() => loadAlbum(kv), 'album')) ?? [];
+  return [
+    ...notes.flatMap(attachmentKeys), ...entryKeys(others), ...bookKeys(shelf), ...photos.map((p) => p.key),
+    ...songKeys(songs), ...albumKeys(album),
+  ];
 }
 
 async function handleLogin(request: Request, kv: KV, cfg: Config, now: Date, role: Role): Promise<Response> {
@@ -360,6 +400,11 @@ async function handleEventSave(request: Request, kv: KV, cfg: Config, now: Date)
   return redirect(`${cfg.base}/event?open=${encodeURIComponent(what === 'card' ? 'card' : doorId)}`);
 }
 
+async function keepsakesWaiting(kv: KV, cfg: Config): Promise<boolean> {
+  const k = await loadKeepsakes(kv, cfg);
+  return Boolean(k && (songsUnplayed(k.songs, k.songsPlayed).length || albumHasNew(k.album, k.albumSeen)));
+}
+
 async function showReader(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
   const session = await readerSession(request, cfg, now);
   if (!session) return html(readerLoginPage({ action: `${cfg.base}/login` }));
@@ -373,7 +418,7 @@ async function showReader(request: Request, kv: KV, cfg: Config, now: Date, url:
     event: await eventWayIn(kv, cfg, today),
     reading: {
       href: `${cfg.base}/reading-room`,
-      unread: Boolean(books && played && books.some((b) => !played.some((p) => p.id === b.id))),
+      unread: Boolean(books && played && books.some((b) => !played.some((p) => p.id === b.id))) || await keepsakesWaiting(kv, cfg),
     },
     ...selectForReader(notes, today),
     mediaBase: `${cfg.base}/media`,
@@ -455,8 +500,15 @@ async function showReadingRoom(request: Request, kv: KV, cfg: Config, now: Date,
   if (!session) return html(readerLoginPage({ action: `${cfg.base}/login` }));
   const books = await tryLoad(() => loadBooks(kv), 'books');
   if (!books) return html(readingRoomErrorPage(), 500);
+  let keepsakes = await loadKeepsakes(kv, cfg);
+  // Without JavaScript the album's link is how she opens it, so the link records it.
+  if (keepsakes && keepsakes.album.length && url.searchParams.get('open') === 'album') {
+    await kv.put(ALBUM_SEEN_KEY, now.toISOString());
+    keepsakes = { ...keepsakes, albumSeen: now.toISOString() };
+  }
   return html(readingRoomPage({
     books,
+    keepsakes,
     played: (await tryLoad(() => loadPlayed(kv), 'played books')) ?? [],
     replies: await tryLoad(() => loadBookReplies(kv), 'book replies'),
     back: cfg.base,
@@ -480,6 +532,28 @@ async function bookRequest(request: Request, kv: KV, cfg: Config, now: Date): Pr
 }
 
 const quietDone = () => new Response(null, { status: 204, headers: PAGE_HEADERS });
+
+async function handleSongPlayed(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
+  const session = await readerSession(request, cfg, now);
+  if (!session) return redirect(cfg.base);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  const id = field(form, 'id');
+  if (!(await loadSongs(kv)).some((x) => x.id === id)) return notFound();
+  const played = await loadSongsPlayed(kv);
+  const next = markPlayed(played, id, now.toISOString());
+  if (next !== played) await kv.put(SONGS_PLAYED_KEY, JSON.stringify(next));
+  return field(form, 'quiet') === '1' ? quietDone() : redirect(`${cfg.base}/reading-room?open=records`);
+}
+
+async function handleAlbumSeen(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
+  const session = await readerSession(request, cfg, now);
+  if (!session) return redirect(cfg.base);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  await kv.put(ALBUM_SEEN_KEY, now.toISOString());
+  return field(form, 'quiet') === '1' ? quietDone() : redirect(`${cfg.base}/reading-room?open=album`);
+}
 
 async function handlePlayed(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
   const checked = await bookRequest(request, kv, cfg, now);
@@ -576,6 +650,9 @@ async function showMedia(
     if (!asAdmin && note.date > todayInCopenhagen(now)) return notFound();
     return (await serveMedia(env.MEDIA, key, request)) ?? notFound();
   }
+  const keepsake = (await tryLoad(() => loadSongs(env.NOTES), 'songs'))?.some((x) => x.audio.key === key) ||
+    (await tryLoad(() => loadAlbum(env.NOTES), 'album'))?.some((x) => x.photo.key === key);
+  if (keepsake) return (await serveMedia(env.MEDIA, key, request)) ?? notFound();
   const book = (await tryLoad(() => loadBooks(env.NOTES), 'books'))?.find((b) => b.audio.key === key);
   if (book) return (await serveMedia(env.MEDIA, key, request)) ?? notFound();
   const photos = (await tryLoad(() => loadEventPhotos(env.NOTES), 'event photos')) ?? [];
@@ -754,6 +831,9 @@ async function afterDarkAction(
 interface ReadingRoomView {
   editing?: Book;
   draft?: BookDraft;
+  editingSong?: Song;
+  songDraft?: SongDraft;
+  editingPhoto?: AlbumPhoto;
   flash?: string;
   error?: string;
 }
@@ -762,9 +842,14 @@ async function renderReadingRoomAdmin(kv: KV, cfg: Config, session: string, view
   const books = await tryLoad(() => loadBooks(kv), 'books');
   const played = await tryLoad(() => loadPlayed(kv), 'played books');
   const replies = await tryLoad(() => loadBookReplies(kv), 'book replies');
+  const songs = await tryLoad(() => loadSongs(kv), 'songs');
+  const songsPlayed = await tryLoad(() => loadSongsPlayed(kv), 'song play times');
+  const album = await tryLoad(() => loadAlbum(kv), 'album');
   const problems = [
     books ? '' : 'Books could not be read.', played ? '' : 'Play times could not be read.', replies ? '' : 'Replies could not be read.',
+    songs ? '' : 'Songs could not be read.', songsPlayed ? '' : 'Song play times could not be read.', album ? '' : 'The album could not be read.',
   ];
+  const song = view.editingSong;
   const e = view.editing;
   return html(readingRoomAdminPage({
     base: cfg.base,
@@ -774,6 +859,11 @@ async function renderReadingRoomAdmin(kv: KV, cfg: Config, session: string, view
     replies: replies ?? [],
     draft: view.draft ?? (e ? { title: e.title, author: e.author, line: e.line } : EMPTY_BOOK),
     editing: e,
+    keepsakes: {
+      songs: songs ?? [], songsPlayed: songsPlayed ?? [], album: album ?? [],
+      songDraft: view.songDraft ?? (song ? { title: song.title, line: song.line } : EMPTY_SONG),
+      editingSong: song, editingPhoto: view.editingPhoto,
+    },
     flash: view.flash,
     error: [view.error ?? '', ...problems].filter(Boolean).join(' ') || undefined,
   }), status);
@@ -784,8 +874,12 @@ async function showReadingRoomAdmin(request: Request, kv: KV, cfg: Config, now: 
   if (!session) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
   const editId = url.searchParams.get('edit');
   const editing = editId ? (await tryLoad(() => loadBooks(kv), 'books'))?.find((b) => b.id === editId) : undefined;
+  const songId = url.searchParams.get('song');
+  const editingSong = songId ? (await tryLoad(() => loadSongs(kv), 'songs'))?.find((x) => x.id === songId) : undefined;
+  const photoId = url.searchParams.get('photo');
+  const editingPhoto = photoId ? (await tryLoad(() => loadAlbum(kv), 'album'))?.find((x) => x.id === photoId) : undefined;
   const msg = url.searchParams.get('msg') ?? '';
-  return renderReadingRoomAdmin(kv, cfg, session, { editing, flash: Object.hasOwn(FLASH, msg) ? FLASH[msg] : undefined });
+  return renderReadingRoomAdmin(kv, cfg, session, { editing, editingSong, editingPhoto, flash: Object.hasOwn(FLASH, msg) ? FLASH[msg] : undefined });
 }
 
 async function showReadingRoomPreview(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
@@ -800,6 +894,7 @@ async function showReadingRoomPreview(request: Request, kv: KV, cfg: Config, now
     mediaBase: `${cfg.base}/admin/media`,
     open: url.searchParams.get('open') ?? undefined,
     preview: `${cfg.base}/admin/reading-room/preview`,
+    keepsakes: await loadKeepsakes(kv, cfg),
   }));
 }
 
@@ -911,6 +1006,69 @@ async function eventAdminAction(
   await kv.put(EVENT_PHOTOS_KEY, JSON.stringify(next));
   if (replaced.length) await retireOrphans(env, replaced, await keysInUse(kv, notes), now);
   return redirect(`${home}?msg=photos-added`);
+}
+
+async function keepsakeAction(
+  request: Request, env: Env, cfg: Config, now: Date,
+  action: 'song-save' | 'song-delete' | 'photo-save' | 'photo-delete' | 'photo-move',
+): Promise<Response> {
+  const home = `${cfg.base}/admin/reading-room`;
+  const session = await adminSession(request, cfg, now);
+  if (!session) return redirect(`${cfg.base}/admin`);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  const kv = env.NOTES;
+  // These loads throw on corrupt data, before anything is written or uploaded.
+  const notes = await loadNotes(kv);
+  const id = field(form, 'id');
+  if (action === 'song-save' || action === 'song-delete') {
+    const songs = await loadSongs(kv);
+    const existing = songs.find((x) => x.id === id);
+    if (action === 'song-delete') {
+      if (!existing) return redirect(`${home}?msg=deleted#songs`);
+      await kv.put(SONGS_KEY, JSON.stringify(removeSong(songs, id)));
+      await retireOrphans(env, [existing.audio.key], await keysInUse(kv, notes), now);
+      await updateStored(kv, SONGS_PLAYED_KEY, parsePlayed, (p) => dropPlayed(p, id));
+      return redirect(`${home}?msg=deleted#songs`);
+    }
+    if (id && !existing) return notFound();
+    const parsed = parseSongForm((name) => field(form, name));
+    const audioFile = uploadedFile(form, 'audio');
+    const check = audioFile ? checkFile('audio', audioFile) : null;
+    const errors = [parsed.error ?? '', check && !check.ok ? check.error : '', !audioFile && !existing ? SONG_FILE_NEEDED : ''].filter(Boolean);
+    if (errors.length) return renderReadingRoomAdmin(kv, cfg, session, { editingSong: existing, songDraft: parsed.draft, error: errors.join(' ') }, 400);
+    const audio = await storeUpload(env.MEDIA, 'audio', audioFile, check?.ok ? check.type : undefined, existing?.audio);
+    if (!audio) return renderReadingRoomAdmin(kv, cfg, session, { editingSong: existing, songDraft: parsed.draft, error: SONG_FILE_NEEDED }, 400);
+    const song: Song = { id: existing?.id ?? crypto.randomUUID(), ...parsed.draft, created: existing?.created ?? now.toISOString(), audio };
+    await kv.put(SONGS_KEY, JSON.stringify(upsertSong(songs, song)));
+    await retireOrphans(env, songKeys(songs), await keysInUse(kv, notes), now);
+    return redirect(`${home}?msg=saved#songs`);
+  }
+  const album = await loadAlbum(kv);
+  const existing = album.find((x) => x.id === id);
+  if (action === 'photo-move') {
+    const by = field(form, 'by');
+    if (existing && (by === '1' || by === '-1')) await kv.put(ALBUM_KEY, JSON.stringify(movePhoto(album, id, by === '1' ? 1 : -1)));
+    return redirect(`${home}#album`);
+  }
+  if (action === 'photo-delete') {
+    if (!existing) return redirect(`${home}?msg=deleted#album`);
+    await kv.put(ALBUM_KEY, JSON.stringify(removePhoto(album, id)));
+    await retireOrphans(env, [existing.photo.key], await keysInUse(kv, notes), now);
+    return redirect(`${home}?msg=deleted#album`);
+  }
+  if (id && !existing) return notFound();
+  const parsed = parsePhotoForm((name) => field(form, name));
+  const photoFile = uploadedFile(form, 'photo');
+  const check = photoFile ? checkFile('photo', photoFile) : null;
+  const errors = [parsed.error ?? '', check && !check.ok ? check.error : '', !photoFile && !existing ? PHOTO_FILE_NEEDED : ''].filter(Boolean);
+  if (errors.length) return renderReadingRoomAdmin(kv, cfg, session, { editingPhoto: existing, error: errors.join(' ') }, 400);
+  const photo = await storeUpload(env.MEDIA, 'photo', photoFile, check?.ok ? check.type : undefined, existing?.photo);
+  if (!photo) return renderReadingRoomAdmin(kv, cfg, session, { editingPhoto: existing, error: PHOTO_FILE_NEEDED }, 400);
+  const page: AlbumPhoto = { id: existing?.id ?? crypto.randomUUID(), line: parsed.line, created: existing?.created ?? now.toISOString(), photo };
+  await kv.put(ALBUM_KEY, JSON.stringify(upsertPhoto(album, page)));
+  await retireOrphans(env, albumKeys(album), await keysInUse(kv, notes), now);
+  return redirect(`${home}?msg=saved#album`);
 }
 
 async function readingRoomAction(
@@ -1166,6 +1324,13 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
       case 'POST /admin/event/photos/delete': return await eventAdminAction(request, env, cfg, now, 'photo-delete');
       case 'POST /admin/event/clear': return await eventAdminAction(request, env, cfg, now, 'clear');
       case 'GET /reading-room': return await showReadingRoom(request, kv, cfg, now, url);
+      case 'POST /reading-room/song-played': return await handleSongPlayed(request, kv, cfg, now);
+      case 'POST /reading-room/album-seen': return await handleAlbumSeen(request, kv, cfg, now);
+      case 'POST /admin/reading-room/song/save': return await keepsakeAction(request, env, cfg, now, 'song-save');
+      case 'POST /admin/reading-room/song/delete': return await keepsakeAction(request, env, cfg, now, 'song-delete');
+      case 'POST /admin/reading-room/photo/save': return await keepsakeAction(request, env, cfg, now, 'photo-save');
+      case 'POST /admin/reading-room/photo/delete': return await keepsakeAction(request, env, cfg, now, 'photo-delete');
+      case 'POST /admin/reading-room/photo/move': return await keepsakeAction(request, env, cfg, now, 'photo-move');
       case 'POST /reading-room/played': return await handlePlayed(request, kv, cfg, now);
       case 'POST /reading-room/reply': return await handleBookReply(request, kv, cfg, now);
       case 'GET /admin/reading-room': return await showReadingRoomAdmin(request, kv, cfg, now, url);
