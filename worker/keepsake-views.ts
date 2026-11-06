@@ -32,7 +32,7 @@ const KEEPSAKE_STYLE = `
 .cover span { font-size: 1.9rem; text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5); }
 .keep-wrap { position: fixed; inset: 0; z-index: 3; display: flex; align-items: flex-end; justify-content: center; padding: 0 0.5rem; background: rgba(15, 10, 8, 0.6); }
 .keep-wrap[hidden] { display: none; }
-.keep-sheet { width: 100%; max-width: 32rem; max-height: 92vh; overflow-y: auto; padding: 1.3rem 1.2rem calc(1.3rem + env(safe-area-inset-bottom, 0px)); border-radius: 1.2rem 1.2rem 0 0; background: #fbf5ea; color: #3a2e28; animation: up 0.35s ease-out both; }
+.keep-sheet { width: 100%; max-width: 32rem; max-height: 88vh; overflow-y: auto; padding: 1.3rem 1.2rem calc(1.3rem + env(safe-area-inset-bottom, 0px)); border-radius: 1.2rem 1.2rem 0 0; background: #fbf5ea; color: #3a2e28; animation: up 0.35s ease-out both; }
 .keep-sheet h2 { margin: 0 0 0.8rem; font-weight: 500; font-size: 1.6rem; }
 .keep-close { display: block; margin: 1rem auto 0; text-align: center; font-style: italic; font-size: 1.1rem; color: #8c7b6c; }
 .big-deck { display: none; width: 86%; margin: 0 auto 1rem; cursor: pointer; }
@@ -171,7 +171,14 @@ export const KEEPSAKE_SCRIPT = `<script>
       if (smallLabel) smallLabel.textContent = title;
       note.textContent = '';
       draw();
-      if (start) audioOf(sleeve).play();
+      if (start) begin(audioOf(sleeve));
+    }
+    // After a failed load the element stays broken until it is loaded again, and play() only says so through its promise.
+    function begin(a) {
+      note.textContent = '';
+      if (a.error) a.load();
+      var promise = a.play();
+      if (promise && promise.then) promise.then(null, function () { spin(false); note.textContent = "That didn't play. Try again?"; });
     }
     function listen(sleeve) {
       var audio = audioOf(sleeve);
@@ -224,7 +231,7 @@ export const KEEPSAKE_SCRIPT = `<script>
     function toggle() {
       if (!current) return;
       var a = audioOf(current);
-      if (a.paused) { note.textContent = ''; a.play(); } else a.pause();
+      if (a.paused) begin(a); else a.pause();
     }
     button.addEventListener('click', toggle);
     records.querySelector('.big-deck').addEventListener('click', toggle);

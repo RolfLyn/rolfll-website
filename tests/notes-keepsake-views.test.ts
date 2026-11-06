@@ -71,6 +71,10 @@ describe('the sideboard', () => {
     expect(board()).toContain('data-played="/for-you/reading-room/song-played" data-seen="/for-you/reading-room/album-seen" data-csrf="tok"');
   });
 
+  it('keeps its sheets as short as the book sheets, so iPhone toolbars never hide their top', () => {
+    expect(board()).toMatch(/\.keep-sheet \{[^}]*max-height: 88vh/);
+  });
+
   it('carries its script', () => {
     expect(board()).toContain(KEEPSAKE_SCRIPT);
   });
