@@ -5,6 +5,8 @@ import {
 } from './views';
 import { BOOK_LIMITS, spineLook, type Book, type BookDraft, type Played } from './books';
 import type { EntryReply } from './after-dark';
+import { sideboard } from './keepsake-views';
+import type { Song, AlbumPhoto } from './keepsakes';
 
 const ROOM_STYLE = `
 :root { --paper: #fbf5ea; --ink: #3a2e28; --muted: #8c7b6c; --accent: #b0645a; --line: #e4d8c4; --cream: #f1e6d2; }
@@ -130,7 +132,8 @@ export const ROOM_SCRIPT = `<script>
     audio.addEventListener('pause', save);
     audio.addEventListener('ended', save);
     audio.addEventListener('play', function () {
-      for (var k = 0; k < audios.length; k++) if (audios[k] !== audio) audios[k].pause();
+      var all = document.querySelectorAll('audio');
+      for (var k = 0; k < all.length; k++) if (all[k] !== audio) all[k].pause();
       if ('mediaSession' in navigator && window.MediaMetadata) {
         try {
           navigator.mediaSession.metadata = new MediaMetadata({
@@ -186,11 +189,18 @@ function readOn(book: Book): string {
   return `Read on ${formatDate(todayInCopenhagen(new Date(book.created)))}`;
 }
 
-export function readingRoomPage({ books, played, replies, back, mediaBase, playAction, reply, open, unsent, preview }: {
+export interface Keepsakes {
+  songs: Song[]; songsPlayed: Played[]; album: AlbumPhoto[]; albumSeen: string | null;
+  songPlayAction?: string; albumSeenAction?: string;
+}
+
+export function readingRoomPage({ books, played, replies, back, mediaBase, playAction, reply, open, unsent, preview, keepsakes }: {
   books: Book[]; played: Played[]; replies: EntryReply[] | null; back: string; mediaBase: string;
   playAction?: string; reply?: ReplyForm; open?: string; unsent?: string;
   /** The preview's own address: nothing is recorded and replies are off. */
   preview?: string;
+  /** The record player and album; null when they could not be read, so only they are missing. */
+  keepsakes?: Keepsakes | null;
 }): string {
   const home = preview ?? `${back}/reading-room`;
   const form = preview ? undefined : reply;
@@ -214,6 +224,12 @@ ${replies ? replyArea({ field: 'id', value: b.id, anchor: `reply-${b.id}` }, rep
 ${books.length ? '' : '<p class="quiet">Nothing on the shelf yet.</p>\n'}<div class="shelves"${recording}>
 ${spines}
 </div>
+${keepsakes ? sideboard({
+    ...keepsakes, mediaBase, home, open,
+    songPlayAction: preview ? undefined : keepsakes.songPlayAction,
+    albumSeenAction: preview ? undefined : keepsakes.albumSeenAction,
+    csrf: preview ? undefined : reply?.csrf,
+  }) : ''}
 ${sheets}${books.length ? `\n${ROOM_SCRIPT}` : ''}`);
 }
 
