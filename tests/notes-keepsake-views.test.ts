@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sideboard, KEEPSAKE_SCRIPT } from '../worker/keepsake-views';
+import { sideboard, keepsakesAdmin, KEEPSAKE_SCRIPT } from '../worker/keepsake-views';
 import { readingRoomPage, ROOM_SCRIPT } from '../worker/reading-room-views';
 import { KEEP_AWAKE_SCRIPT } from '../worker/views';
 import type { Song, AlbumPhoto } from '../worker/keepsakes';
@@ -89,5 +89,59 @@ describe('in the reading room', () => {
   it('a book pauses every other sound on the page, records included', () => {
     expect(ROOM_SCRIPT).toContain("document.querySelectorAll('audio')");
     expect(KEEPSAKE_SCRIPT).toContain("document.querySelectorAll('audio')");
+  });
+});
+
+describe('admin', () => {
+  const admin = (extra: Partial<Parameters<typeof keepsakesAdmin>[0]> = {}) => keepsakesAdmin({
+    base: '/for-you', csrf: 'tok', songs, songsPlayed: [{ id: id(1), at: '2026-01-04T10:00:00.000Z' }], album,
+    songDraft: { title: '', line: '' }, ...extra,
+  });
+
+  it('has a song form that needs a file only when adding', () => {
+    const html = admin();
+    expect(html).toContain('action="/for-you/admin/reading-room/song/save"');
+    expect(html).toContain('enctype="multipart/form-data"');
+    expect(html).toMatch(/name="audio" accept="audio\/\*,\.m4a" required/);
+    const editing = admin({ editingSong: songs[0], songDraft: { title: songs[0].title, line: songs[0].line } });
+    expect(editing).not.toMatch(/name="audio" accept="audio\/\*,\.m4a" required/);
+    expect(editing).toContain(`<input type="hidden" name="id" value="${id(2)}">`);
+    expect(editing).toContain('value="Newer &lt;song&gt;"');
+  });
+
+  it('lists songs with play status, edit and delete', () => {
+    const html = admin();
+    expect(html).toContain('Not played yet');
+    expect(html).toContain('Listened');
+    expect(html).toContain(`href="/for-you/admin/reading-room?song=${id(2)}#songs"`);
+    expect(html).toContain('action="/for-you/admin/reading-room/song/delete"');
+    expect(html).toContain("confirm('Delete this song?')");
+  });
+
+  it('has a photo form and lists pages with their photo, line, moves and delete', () => {
+    const html = admin();
+    expect(html).toContain('action="/for-you/admin/reading-room/photo/save"');
+    expect(html).toMatch(/name="photo" accept="image\/\*" required/);
+    expect(html).toContain(`src="/for-you/admin/media/${id(3)}.jpg"`);
+    expect(html).toContain('First &lt;page&gt;');
+    expect(html).toContain("confirm('Delete this page?')");
+    expect(html).toContain(`href="/for-you/admin/reading-room?photo=${id(4)}#album"`);
+  });
+
+  it('offers Up only below the first page and Down only above the last', () => {
+    const html = admin();
+    const rows = html.split('<li>');
+    const first = rows.find((r) => r.includes(`${id(3)}.jpg`))!;
+    const last = rows.find((r) => r.includes(`${id(4)}.jpg`))!;
+    expect(first).not.toContain('value="-1"');
+    expect(first).toContain('value="1"');
+    expect(last).toContain('value="-1"');
+    expect(last).not.toMatch(/name="by" value="1"/);
+  });
+
+  it('editing a page keeps the photo optional', () => {
+    const html = admin({ editingPhoto: album[0] });
+    expect(html).not.toMatch(/name="photo" accept="image\/\*" required/);
+    expect(html).toContain('First &lt;page&gt;</textarea>');
   });
 });

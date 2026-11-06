@@ -1,5 +1,6 @@
 import { escapeHtml } from './html';
-import { albumHasNew, songsUnplayed, type Song, type AlbumPhoto } from './keepsakes';
+import { formatStamp } from './views';
+import { albumHasNew, songsUnplayed, KEEPSAKE_LIMITS, type Song, type AlbumPhoto, type SongDraft } from './keepsakes';
 import type { Played } from './books';
 
 const CAVEAT = '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@500&display=swap">';
@@ -327,4 +328,66 @@ ${items.join('\n')}
 </div>
 ${sheets.join('\n')}
 ${KEEPSAKE_SCRIPT}`;
+}
+
+/** His two sections in the reading room admin: the songs and the album pages. */
+export function keepsakesAdmin(d: {
+  base: string; csrf: string; songs: Song[]; songsPlayed: Played[]; album: AlbumPhoto[];
+  songDraft: SongDraft; editingSong?: Song; editingPhoto?: AlbumPhoto;
+}): string {
+  const csrf = `<input type="hidden" name="csrf" value="${escapeHtml(d.csrf)}">`;
+  const at = (path: string) => escapeHtml(`${d.base}/admin/reading-room${path}`);
+  const songRows = d.songs.map((s) => {
+    const when = d.songsPlayed.find((p) => p.id === s.id)?.at;
+    return `<li>
+  <div class="meta">
+    <span>${when ? `Listened ${escapeHtml(formatStamp(when))}` : 'Not played yet'}</span>
+    <span class="actions">
+      <a href="${at(`?song=${s.id}#songs`)}">Edit</a>
+      <form method="post" action="${at('/song/delete')}" onsubmit="return confirm('Delete this song?')">${csrf}<input type="hidden" name="id" value="${escapeHtml(s.id)}"><button type="submit">Delete</button></form>
+    </span>
+  </div>
+  <p class="text"><strong>${escapeHtml(s.title)}</strong>${s.line ? ` · ${escapeHtml(s.line)}` : ''}</p>
+  <div class="attached"><audio controls preload="none" src="${escapeHtml(`${d.base}/admin/media/${s.audio.key}`)}"></audio></div>
+</li>`;
+  }).join('\n');
+  const pageRows = d.album.map((p, i) => `<li>
+  <div class="meta">
+    <span>Page ${i + 1}</span>
+    <span class="actions">
+      <a href="${at(`?photo=${p.id}#album`)}">Edit</a>
+      ${i > 0 ? `<form method="post" action="${at('/photo/move')}">${csrf}<input type="hidden" name="id" value="${escapeHtml(p.id)}"><input type="hidden" name="by" value="-1"><button type="submit">Up</button></form>` : ''}
+      ${i < d.album.length - 1 ? `<form method="post" action="${at('/photo/move')}">${csrf}<input type="hidden" name="id" value="${escapeHtml(p.id)}"><input type="hidden" name="by" value="1"><button type="submit">Down</button></form>` : ''}
+      <form method="post" action="${at('/photo/delete')}" onsubmit="return confirm('Delete this page?')">${csrf}<input type="hidden" name="id" value="${escapeHtml(p.id)}"><button type="submit">Delete</button></form>
+    </span>
+  </div>
+  <img class="thumb" src="${escapeHtml(`${d.base}/admin/media/${p.photo.key}`)}" alt="" style="max-width:9rem;border-radius:0.4rem">
+  <p class="text">${p.line ? escapeHtml(p.line) : '<em>No line yet</em>'}</p>
+</li>`).join('\n');
+  const song = d.editingSong;
+  const photo = d.editingPhoto;
+  return `
+<h2 id="songs">${song ? 'Edit song' : 'Add a song'}</h2>
+<form class="write" method="post" enctype="multipart/form-data" action="${at('/song/save')}">
+  ${csrf}
+  ${song ? `<input type="hidden" name="id" value="${escapeHtml(song.id)}">` : ''}
+  <input name="title" maxlength="${KEEPSAKE_LIMITS.title}" required placeholder="Title" value="${escapeHtml(d.songDraft.title)}">
+  <input name="line" maxlength="${KEEPSAKE_LIMITS.line}" placeholder="A line from you (optional)" value="${escapeHtml(d.songDraft.line)}">
+  <label class="file">Recording<input type="file" name="audio" accept="audio/*,.m4a"${song ? '' : ' required'}></label>
+  <p class="hint">M4A, MP3, AAC or WAV, up to 25 MB.${song ? ' Leave empty to keep the current recording.' : ''}</p>
+  <button type="submit">Save</button>
+</form>
+<h2>Our records</h2>
+<ul>${songRows || '<li>No songs yet.</li>'}</ul>
+<h2 id="album">${photo ? 'Edit page' : 'Add a page to the album'}</h2>
+<form class="write" method="post" enctype="multipart/form-data" action="${at('/photo/save')}">
+  ${csrf}
+  ${photo ? `<input type="hidden" name="id" value="${escapeHtml(photo.id)}">` : ''}
+  <textarea name="line" maxlength="${KEEPSAKE_LIMITS.line}" rows="2" placeholder="A line from you (optional)">${escapeHtml(photo?.line ?? '')}</textarea>
+  <label class="file">Photo<input type="file" name="photo" accept="image/*"${photo ? '' : ' required'}></label>
+  <p class="hint">JPEG, PNG, WebP or GIF.${photo ? ' Leave empty to keep the current photo.' : ' New pages go at the end.'}</p>
+  <button type="submit">Save</button>
+</form>
+<h2>Our album</h2>
+<ul>${pageRows || '<li>No pages yet.</li>'}</ul>`;
 }

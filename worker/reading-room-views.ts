@@ -5,7 +5,7 @@ import {
 } from './views';
 import { BOOK_LIMITS, spineLook, type Book, type BookDraft, type Played } from './books';
 import type { EntryReply } from './after-dark';
-import { sideboard } from './keepsake-views';
+import { sideboard, keepsakesAdmin } from './keepsake-views';
 import type { Song, AlbumPhoto } from './keepsakes';
 
 const ROOM_STYLE = `
@@ -247,6 +247,8 @@ export interface ReadingRoomAdminData {
   editing?: Book;
   flash?: string;
   error?: string;
+  /** The songs and album sections; left out when they could not be read. */
+  keepsakes?: Omit<Parameters<typeof keepsakesAdmin>[0], 'base' | 'csrf'>;
 }
 
 export function readingRoomAdminPage(d: ReadingRoomAdminData): string {
@@ -287,5 +289,6 @@ ${errorLine(d.error)}
   <button type="submit">Save</button>
 </form>
 <h2>The shelf</h2>
-<ul>${rows || '<li>No books yet.</li>'}</ul>`);
+<ul>${rows || '<li>No books yet.</li>'}</ul>
+${d.keepsakes ? keepsakesAdmin({ base: d.base, csrf: d.csrf, ...d.keepsakes }) : ''}`);
 }
