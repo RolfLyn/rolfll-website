@@ -40,7 +40,7 @@ import {
 } from './event';
 import { eventPage, eventErrorPage, eventAdminPage } from './event-views';
 import {
-  checkGift, parseStoredGift, parseGiftState, emptyGiftState, unwrapGift, pickGiftDay, parseBookingLines, markBooked,
+  checkGift, parseStoredGift, parseGiftState, parseGiftBooking, herSide, bookingRecord, emptyGiftState, unwrapGift, pickGiftDay, parseBookingLines, markBooked,
   undoBooked, seeBooked, isGiftShowing, readerGift, giftWaiting, giftPhotoKeys, giftPhotoNames, type Gift, type GiftState,
 } from './gift';
 import { giftPage, giftErrorPage, giftAdminPage } from './gift-views';
@@ -71,6 +71,7 @@ const EVENT_PHOTOS_KEY = 'event_photos';
 const GIFT_KEY = 'gift';
 const GIFT_STATE_KEY = 'gift_state';
 const GIFT_PHOTOS_KEY = 'gift_photos';
+const GIFT_BOOKING_KEY = 'gift_booking';
 const FLASH: Record<string, string> = {
   'photos-added': 'Photos added.', 'photo-removed': 'Photo removed.', cleared: 'Her picks are cleared.',
   saved: 'Saved.', deleted: 'Deleted.', 'gift-cleared': 'Her side of the gift is cleared.', booked: 'Marked booked.', unbooked: 'Booking undone. She can pick a day again.', 'meeting-saved': 'Meeting saved.', 'meeting-removed': 'Meeting removed.',
@@ -134,8 +135,11 @@ async function loadGiftPhotos(kv: KV): Promise<EventPhoto[]> {
   return parsePhotos(await kv.get(GIFT_PHOTOS_KEY));
 }
 
+/** Her record with his booking added from its own key; only she writes the first, only he the second. */
 async function loadGiftState(kv: KV, giftId: string): Promise<GiftState> {
-  return parseGiftState(await kv.get(GIFT_STATE_KEY), giftId);
+  const state = parseGiftState(await kv.get(GIFT_STATE_KEY), giftId);
+  const booked = parseGiftBooking(await kv.get(GIFT_BOOKING_KEY), giftId);
+  return booked ? { ...state, booked } : state;
 }
 
 async function loadNotes(kv: KV): Promise<Note[]> {
@@ -375,7 +379,7 @@ async function showGift(request: Request, kv: KV, cfg: Config, now: Date): Promi
   const view = readerGift(gift, state, photos, today);
   // Seeing the booked page is what puts out the dot on her notes page.
   if (view.stage === 'booked' && giftWaiting(gift, state)) {
-    await kv.put(GIFT_STATE_KEY, JSON.stringify(seeBooked(state, now.toISOString())));
+    await kv.put(GIFT_STATE_KEY, herSide(seeBooked(state, now.toISOString())));
   }
   return html(giftPage({
     view, home: `${cfg.base}/gift`, mediaBase: `${cfg.base}/media`, saveAction: `${cfg.base}/gift/save`,
@@ -403,7 +407,7 @@ async function handleGiftSave(request: Request, kv: KV, cfg: Config, now: Date):
   const what = field(form, 'do');
   const next = what === 'unwrap' ? unwrapGift(state, at) : what === 'pick' ? pickGiftDay(state, gift, field(form, 'day'), today, at) : null;
   if (!next) return notFound();
-  if (next !== state) await kv.put(GIFT_STATE_KEY, JSON.stringify(next));
+  if (next !== state) await kv.put(GIFT_STATE_KEY, herSide(next));
   if (field(form, 'quiet') === '1') return quietDone();
   return redirect(`${cfg.base}/gift`);
 }
@@ -1075,7 +1079,8 @@ async function giftAdminAction(
   const again = (view: { text?: string; error?: string }, status = 400) => renderGiftAdmin(kv, cfg, session, now, view, status);
   if (action === 'clear') {
     const gift = await tryLoad(() => loadGift(kv), 'gift');
-    await kv.put(GIFT_STATE_KEY, JSON.stringify(emptyGiftState(gift?.id ?? '')));
+    await kv.put(GIFT_STATE_KEY, herSide(emptyGiftState(gift?.id ?? '')));
+    await kv.put(GIFT_BOOKING_KEY, bookingRecord(gift?.id ?? '', undefined));
     return redirect(`${home}?msg=gift-cleared`);
   }
   if (action === 'book' || action === 'unbook') {
@@ -1090,14 +1095,14 @@ async function giftAdminAction(
       return again({ error: 'The gift or her side of it could not be read, so nothing was changed.' }, 500);
     }
     if (action === 'unbook') {
-      await kv.put(GIFT_STATE_KEY, JSON.stringify(undoBooked(state)));
+      await kv.put(GIFT_BOOKING_KEY, bookingRecord(gift.id, undoBooked(state).booked));
       return redirect(`${home}?msg=unbooked`);
     }
     const lines = parseBookingLines(field(form, 'lines'));
     if ('error' in lines) return again({ error: lines.error });
     const next = markBooked(state, field(form, 'day'), lines.lines, now.toISOString());
     if (!next) return again({ error: 'Her pick has changed since this page was loaded, so nothing was booked. Look at her pick again.' });
-    await kv.put(GIFT_STATE_KEY, JSON.stringify(next));
+    await kv.put(GIFT_BOOKING_KEY, bookingRecord(gift.id, next.booked));
     return redirect(`${home}?msg=booked`);
   }
   // Throws on corrupt photos before anything is written.

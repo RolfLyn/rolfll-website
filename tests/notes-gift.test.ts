@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  checkGift, parseStoredGift, parseGiftState, emptyGiftState, unwrapGift, pickGiftDay, parseBookingLines, markBooked,
+  checkGift, parseStoredGift, parseGiftState, parseGiftBooking, herSide, emptyGiftState, unwrapGift, pickGiftDay, parseBookingLines, markBooked,
   undoBooked, seeBooked, isGiftShowing, giftStage, readerGift, giftWaiting, giftPhotoKeys, giftPhotoNames,
   type Gift, type GiftState,
 } from '../worker/gift';
@@ -96,6 +96,18 @@ describe('her side', () => {
 });
 
 describe('booking', () => {
+  it('keeps the booking out of her record, in its own', () => {
+    const booked = markBooked(picked('2027-01-05'), '2027-01-05', ['3pm'], AT)!;
+    expect(parseGiftState(json(booked), 'g1').booked).toBeUndefined();
+    expect(JSON.parse(herSide(booked)).booked).toBeUndefined();
+    expect(JSON.parse(herSide(booked)).pick.day).toBe('2027-01-05');
+    expect(parseGiftBooking(json({ giftId: 'g1', ...booked.booked }), 'g1')).toEqual(booked.booked);
+    expect(parseGiftBooking(json({ giftId: 'other', ...booked.booked }), 'g1')).toBeUndefined();
+    expect(parseGiftBooking(json({ giftId: 'g1' }), 'g1')).toBeUndefined();
+    expect(parseGiftBooking(null, 'g1')).toBeUndefined();
+    expect(() => parseGiftBooking('{ nope', 'g1')).toThrow();
+  });
+
   it('reads booking lines', () => {
     expect(parseBookingLines('3pm\r\n\r\n  dinner after  \n')).toEqual({ lines: ['3pm', 'dinner after'] });
     expect('error' in parseBookingLines('  \n ')).toBe(true);

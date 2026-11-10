@@ -147,12 +147,28 @@ export function parseGiftState(raw: string | null, giftId: string): GiftState {
   if (isTime(data.unwrapped)) state.unwrapped = data.unwrapped;
   if (isPick(data.pick)) state.pick = { day: data.pick.day, at: data.pick.at };
   if (Array.isArray(data.history)) state.history = data.history.filter(isPick).map((p) => ({ day: p.day, at: p.at }));
-  const b = data.booked;
-  if (isObject(b) && typeof b.day === 'string' && isTime(b.at) && Array.isArray(b.lines) && b.lines.every((l) => typeof l === 'string')) {
-    state.booked = { day: b.day, lines: [...b.lines], at: b.at };
-  }
   if (isTime(data.bookedSeen)) state.bookedSeen = data.bookedSeen;
   return state;
+}
+
+/** His booking, kept in its own record so her saves and his can never overwrite each other. Throws when corrupt. */
+export function parseGiftBooking(raw: string | null, giftId: string): GiftState['booked'] {
+  if (raw === null) return undefined;
+  const b: unknown = JSON.parse(raw);
+  if (!isObject(b)) throw new Error('The gift booking is not an object');
+  if (b.giftId !== giftId || typeof b.day !== 'string' || !isTime(b.at) || !Array.isArray(b.lines) || !b.lines.every((l) => typeof l === 'string')) return undefined;
+  return { day: b.day, lines: [...b.lines], at: b.at };
+}
+
+/** What her record holds: everything but his booking. */
+export function herSide(s: GiftState): string {
+  const { booked: _, ...rest } = s;
+  return JSON.stringify(rest);
+}
+
+/** What the booking record holds. */
+export function bookingRecord(giftId: string, booked: GiftState['booked']): string {
+  return JSON.stringify(booked ? { giftId, ...booked } : { giftId });
 }
 
 export function unwrapGift(s: GiftState, at: string): GiftState {

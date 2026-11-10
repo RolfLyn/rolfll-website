@@ -66,7 +66,7 @@ A failed save leaves her on the picker with her tile still selected and says "Th
 
 ## The gift
 
-KV `gift` holds the gift, KV `gift_state` holds her side and the booking, KV `gift_photos` lists the uploaded photos (as `event_photos` does).
+KV `gift` holds the gift, KV `gift_state` holds her side (only her saves write it), KV `gift_booking` holds his booking (only admin writes it), KV `gift_photos` lists the uploaded photos (as `event_photos` does). Keeping her side and the booking apart means a stale read on either side can never overwrite the other; if they disagree on the day, her page shows her pick and admin flags the mismatch.
 
 ```json
 {
@@ -109,7 +109,8 @@ Checks on save: real dates; unique day ids; 1 to 8 days; 1 to 6 reveals; 0 to 2 
 - Preview takes an optional date, like the event preview, to see it before `from` or as of a chosen day.
 - Admin saves: booking lines (only when she has a pick), undo booked, clear.
 - Photos are served only to her session while the gift is showing, or to admin, `no-store`, and count in `keysInUse` so the purge leaves them alone.
-- Deploy backups cover `gift`, `gift_state` and `gift_photos`.
+- Deploy backups cover `gift`, `gift_state`, `gift_booking` and `gift_photos`.
+- A pick the server refuses (her day turned, or he booked meanwhile) reloads her page so she sees where things stand.
 
 ## The first gift (not in the repo)
 

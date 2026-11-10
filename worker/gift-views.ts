@@ -113,11 +113,12 @@ export const GIFT_SCRIPT = `<script>
     for (var k in fields) if (fields.hasOwnProperty(k)) body.push(encodeURIComponent(k) + '=' + encodeURIComponent(fields[k]));
     var xhr = new XMLHttpRequest();
     var finished = false;
-    function end(ok) { if (!finished) { finished = true; done(ok); } }
+    // A refusal from the server (not a lost connection) means things moved on: her day turned, or he booked.
+    function end(ok, refused) { if (!finished) { finished = true; done(ok, refused); } }
     xhr.open('POST', save);
     xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
     xhr.timeout = 15000;
-    xhr.onload = function () { end(xhr.status === 204); };
+    xhr.onload = function () { end(xhr.status === 204, xhr.status === 404); };
     xhr.onerror = function () { end(false); };
     xhr.ontimeout = function () { end(false); };
     xhr.send(body.join('&'));
@@ -175,8 +176,8 @@ export const GIFT_SCRIPT = `<script>
     confirm.addEventListener('click', function () {
       if (!chosenDay) return;
       confirm.disabled = true;
-      post({ 'do': 'pick', day: chosenDay }, function (ok) {
-        if (ok && save) { window.location.replace(home); return; }
+      post({ 'do': 'pick', day: chosenDay }, function (ok, refused) {
+        if ((ok || refused) && save) { window.location.replace(home); return; }
         confirm.disabled = false;
         if (!ok) say("That didn't save. Try again?");
       });
@@ -311,7 +312,11 @@ export function giftAdminPage(d: {
 ${bookForm(s.booked.lines.join('\n'), 'Save the lines')}
 <form method="post" action="${at('/unbook')}" onsubmit="return confirm('Undo booked? She can pick a day again.')">${csrf}<button type="submit">Undo booked</button></form>`;
     } else if (s.pick && d.gift.days.some((x) => x.id === s.pick!.day)) {
-      status += `<h2>Mark as booked</h2>\n${bookForm('', 'Mark as booked')}`;
+      const moved = s.booked
+        ? `<p class="error">You marked ${escapeHtml(heading(s.booked.day))} booked, but she has since picked ${escapeHtml(heading(s.pick.day))}. Her page shows her pick, not booked. Book her day below, or undo.</p>
+<form method="post" action="${at('/unbook')}" onsubmit="return confirm('Undo booked?')">${csrf}<button type="submit">Undo booked</button></form>`
+        : '';
+      status += `<h2>Mark as booked</h2>\n${moved}${bookForm('', 'Mark as booked')}`;
     }
   }
   const inUse = d.gift ? new Set(d.gift.reveals.flatMap((r) => r.photos)) : new Set<string>();

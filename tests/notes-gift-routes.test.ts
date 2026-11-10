@@ -67,9 +67,10 @@ async function withGift({ save = true } = {}) {
   const csrf = await csrfFrom(ctx.env, '/for-you', reader);
   const her = (fields: Record<string, string>, when = NOW) => handleRequest(post('/for-you/gift/save', { csrf, ...fields }, reader), ctx.env, when);
   const state = () => JSON.parse(ctx.kv.data.get('gift_state') ?? 'null');
+  const booking = () => JSON.parse(ctx.kv.data.get('gift_booking') ?? 'null');
   const notesPage = async (when = NOW) => (await handleRequest(get('/for-you', reader), ctx.env, when)).text();
   const giftPage = async (when = NOW) => (await handleRequest(get('/for-you/gift', reader), ctx.env, when)).text();
-  return { ...ctx, adminCookie, adminDo, photos, keyOf, saved, reader, her, state, notesPage, giftPage };
+  return { ...ctx, adminCookie, adminDo, photos, keyOf, saved, reader, her, state, booking, notesPage, giftPage };
 }
 
 describe('gift routes', () => {
@@ -124,15 +125,15 @@ describe('gift routes', () => {
   });
 
   it('books only the day she picked, then shows it to her once and stops waiting', async () => {
-    const { adminDo, adminCookie, env, her, state, giftPage, notesPage } = await withGift();
+    const { adminDo, adminCookie, env, her, state, booking, giftPage, notesPage } = await withGift();
     await her({ do: 'pick', day: '2027-01-05' });
     expect(await (await handleRequest(get('/for-you/admin/gift', adminCookie), env, NOW)).text()).toContain('Picked Heading 2027-01-05');
     const stale = await adminDo('/book', { day: '2027-01-06', lines: '3pm' });
     expect(stale.status).toBe(400);
     expect(await stale.text()).toContain('changed');
-    expect(state().booked).toBeUndefined();
+    expect(booking()).toBeNull();
     expect((await adminDo('/book', { day: '2027-01-05', lines: '3pm\nDinner after' })).status).toBe(303);
-    expect(state().booked.lines).toEqual(['3pm', 'Dinner after']);
+    expect(booking().lines).toEqual(['3pm', 'Dinner after']);
     expect(await notesPage()).toContain('gift-link waiting');
     await handleRequest(get('/for-you/admin/gift/preview', adminCookie), env, NOW);
     expect(state().bookedSeen).toBeUndefined();
@@ -143,25 +144,47 @@ describe('gift routes', () => {
     expect(await notesPage()).not.toContain('gift-link waiting');
   });
 
+  it('keeps her record and the booking apart, so neither write can undo the other', async () => {
+    const { adminDo, adminCookie, env, her, kv, giftPage } = await withGift();
+    await her({ do: 'pick', day: '2027-01-05' });
+    const hers = kv.data.get('gift_state');
+    await adminDo('/book', { day: '2027-01-05', lines: '3pm' });
+    expect(kv.data.get('gift_state')).toBe(hers);
+    expect(JSON.parse(kv.data.get('gift_booking')!)).toMatchObject({ giftId: 'g1', day: '2027-01-05', lines: ['3pm'] });
+    const booking = kv.data.get('gift_booking');
+    await giftPage();
+    expect(kv.data.get('gift_booking')).toBe(booking);
+    expect(kv.data.get('gift_state')).not.toContain('lines');
+    // A stale read let her move to another day after he booked: she sees her own day, he sees the mismatch.
+    kv.data.set('gift_state', JSON.stringify({ ...JSON.parse(kv.data.get('gift_state')!), pick: { day: '2027-01-06', at: NOW.toISOString() } }));
+    expect(await giftPage()).toContain('data-start="chosen"');
+    const admin = await (await handleRequest(get('/for-you/admin/gift', adminCookie), env, NOW)).text();
+    expect(admin).toContain('she has since picked');
+  });
+
   it('refuses her pick once booked, and lets her pick again after undo', async () => {
-    const { adminDo, her, state } = await withGift();
+    const { adminDo, her, state, booking } = await withGift();
     await her({ do: 'pick', day: '2027-01-05' });
     await adminDo('/book', { day: '2027-01-05', lines: '3pm' });
     expect((await her({ do: 'pick', day: '2027-01-06', quiet: '1' })).status).toBe(404);
-    expect(state().booked.day).toBe('2027-01-05');
+    expect(booking().day).toBe('2027-01-05');
     expect(state().pick.day).toBe('2027-01-05');
     expect((await adminDo('/unbook', {})).status).toBe(303);
     expect((await her({ do: 'pick', day: '2027-01-06', quiet: '1' })).status).toBe(204);
   });
 
   it('clears everything, and refuses a gift save that would lose her pick', async () => {
-    const { adminDo, her, state } = await withGift();
+    const { adminDo, her, state, kv } = await withGift();
+    await her({ do: 'pick', day: '2027-01-05' });
+    await adminDo('/book', { day: '2027-01-05', lines: '3pm' });
+    await adminDo('/clear', {});
     await her({ do: 'pick', day: '2027-01-05' });
     const lose = await adminDo('/save', { gift: JSON.stringify({ ...GIFT(), id: 'g2' }) });
     expect(lose.status).toBe(400);
     expect(await lose.text()).toContain('clear her pick first');
     expect((await adminDo('/clear', {})).status).toBe(303);
     expect(state()).toEqual({ giftId: 'g1', history: [] });
+    expect(JSON.parse(kv.data.get('gift_booking') ?? 'null')).toEqual({ giftId: 'g1' });
     expect((await adminDo('/save', { gift: JSON.stringify({ ...GIFT(), id: 'g2' }) })).status).toBe(303);
   });
 
