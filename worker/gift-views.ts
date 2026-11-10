@@ -8,6 +8,9 @@ const GIFT_FONTS = `${READER_FONTS}
 const GIFT_STYLE = `
 :root { --gold: #f2c879; --cream: #f3eadb; --paper: #fbf5ea; --ink: #3a2e28; --muted: #8c7b6c; --rose: #b0645a; --box: #a24646; --lid: #8e3b3b; }
 * { box-sizing: border-box; }
+button, a { -webkit-tap-highlight-color: transparent; }
+.day:focus { outline: none; }
+.day:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 body { margin: 0; min-height: 100vh; background: linear-gradient(#16222f 0, #24384b 40rem, #2c4155 100%); background-color: #16222f; color: var(--cream); font-family: 'Cormorant Garamond', Georgia, serif; overflow-x: hidden; }
 body::before { content: ''; position: fixed; inset: 0; pointer-events: none; background-image: radial-gradient(1px 1px at 20% 12%, #fff9, transparent), radial-gradient(1px 1px at 70% 6%, #fffa, transparent), radial-gradient(1.5px 1.5px at 86% 26%, #fffb, transparent), radial-gradient(1px 1px at 38% 22%, #fff8, transparent), radial-gradient(1px 1px at 9% 38%, #fff7, transparent), radial-gradient(1px 1px at 58% 44%, #fff6, transparent); }
 .back { display: inline-block; margin: 1rem 1rem 0; color: #d8cdbd; font-size: 1.05rem; text-decoration: none; position: relative; }
