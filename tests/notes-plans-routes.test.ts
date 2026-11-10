@@ -148,3 +148,62 @@ describe('Our plans routes', () => {
     expect(await (await handleRequest(get('/for-you/admin/reading-room', admin), env, NOW)).text()).toContain('Our plans could not be read.');
   });
 });
+
+describe('her picks from "What I\'ll do"', () => {
+  const DOC = "## Intro\n\nHi.\n\n## What I'll do\n\n- **Alpha** one\n- **Beta** two\n- **Gamma** three\n\nThanks.";
+  const send = (ctx: Awaited<ReturnType<typeof desk>>, id: string, csrf: string, fields: [string, string][]) => {
+    const body = new URLSearchParams([['csrf', csrf], ['back', 'picks-1'], ...fields]);
+    return handleRequest(new Request(`https://rolfll.com/for-you/reading-room/plans/${id}/picks`, {
+      method: 'POST', body, headers: { Cookie: ctx.reader, ...IP },
+    }), ctx.env, NOW);
+  };
+  async function withDoc(ready = true) {
+    const ctx = await desk();
+    await ctx.act('/save', { title: 'Guide', line: '', ...(ready ? { ready: 'on' } : {}), file: md(DOC) });
+    const id = ctx.plans()[0].id;
+    const page = await (await ctx.open(id)).text();
+    const csrf = ready ? page.match(/name="csrf" value="([^"]+)"/)![1] : await csrfFrom(ctx.env, '/for-you', ctx.reader);
+    return { ...ctx, id, page, csrf };
+  }
+  const all: [string, string][] = [['all', 'alpha'], ['all', 'beta'], ['all', 'gamma']];
+
+  it('gives her a form to send her picks', async () => {
+    const { page, id } = await withDoc();
+    expect(page).toContain(`action="/for-you/reading-room/plans/${id}/picks"`);
+    expect(page).toContain('These, please');
+  });
+
+  it('saves her picks, thanks her, and shows them ticked', async () => {
+    const ctx = await withDoc();
+    const res = await send(ctx, ctx.id, ctx.csrf, [...all, ['pick', 'beta'], ['pick', 'gamma']]);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('Location')).toBe(`/for-you/reading-room/plans/${ctx.id}#picks-1`);
+    expect(JSON.parse(ctx.kv.data.get('plan_picks')!)[0].picks.map((p: { key: string }) => p.key)).toEqual(['beta', 'gamma']);
+    const page = await (await ctx.open(ctx.id)).text();
+    expect(page).toMatch(/value="beta" checked/);
+    expect(page).not.toMatch(/value="alpha" checked/);
+    expect(page).toContain('Got it. I&#39;ll take care of these.');
+  });
+
+  it('tells him in admin, with a dot until he looks', async () => {
+    const ctx = await withDoc();
+    await send(ctx, ctx.id, ctx.csrf, [...all, ['pick', 'beta']]);
+    const adminHome = async () => (await handleRequest(get('/for-you/admin', ctx.admin), ctx.env, NOW)).text();
+    expect(await adminHome()).toContain('class="dot"');
+    const room = await (await handleRequest(get('/for-you/admin/reading-room', ctx.admin), ctx.env, NOW)).text();
+    expect(room).toContain('She&#39;d like 1 of 3');
+    expect(room).toContain('Beta');
+    expect(await adminHome()).not.toContain('class="dot"');
+  });
+
+  it('refuses picks for a draft or with a bad token, and previews without a form', async () => {
+    const draft = await withDoc(false);
+    expect((await send(draft, draft.id, draft.csrf, [...all, ['pick', 'beta']])).status).toBe(404);
+    const ctx = await withDoc();
+    expect((await send(ctx, ctx.id, 'nope', [...all, ['pick', 'beta']])).status).toBe(403);
+    expect(ctx.kv.data.get('plan_picks')).toBeUndefined();
+    const preview = await (await handleRequest(get(`/for-you/admin/reading-room/plan/${ctx.id}`, ctx.admin), ctx.env, NOW)).text();
+    expect(preview).not.toContain('<form');
+    expect(preview).toContain('class="picks"');
+  });
+});

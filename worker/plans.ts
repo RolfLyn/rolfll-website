@@ -110,3 +110,37 @@ export async function readPlanFile(file: File): Promise<{ ok: true; markdown: st
   }
   return { ok: true, markdown: text.replace(/^﻿/, '').replace(/\r\n?/g, '\n') };
 }
+
+/** What she asked him to do from a document's "What I'll do" lists, as she last sent it. */
+export interface PlanPicks { planId: string; picks: { key: string; title: string }[]; at: string; changed: boolean }
+
+const isPick = (p: unknown): p is { key: string; title: string } => isRecord(p) && typeof p.key === 'string' && typeof p.title === 'string';
+
+export function parsePlanPicks(raw: string | null): PlanPicks[] {
+  if (raw === null) return [];
+  const data: unknown = JSON.parse(raw);
+  if (!Array.isArray(data)) throw new Error('Stored plan picks are not a list');
+  return data
+    .filter((r): r is PlanPicks => isRecord(r) && typeof r.planId === 'string' && Array.isArray(r.picks) && r.picks.every(isPick) &&
+      isTime(r.at) && typeof r.changed === 'boolean')
+    .map((r) => ({ planId: r.planId, picks: r.picks.map((p) => ({ key: p.key, title: p.title })), at: r.at, changed: r.changed }));
+}
+
+/**
+ * Her send from one list: `shown` are the items that list held, `ticked` the ones she ticked. Picks from lists she
+ * did not send are kept, anything not in the document is ignored, and the result follows his order.
+ */
+export function sendPicks(
+  all: PlanPicks[], planId: string, items: { key: string; title: string }[], shown: string[], ticked: string[], at: string,
+): PlanPicks[] {
+  const before = all.find((r) => r.planId === planId);
+  const had = new Set(before?.picks.map((p) => p.key) ?? []);
+  const inList = new Set(shown);
+  const on = new Set(ticked.filter((k) => inList.has(k)));
+  const picks = items.filter((i) => (inList.has(i.key) ? on.has(i.key) : had.has(i.key))).map((i) => ({ key: i.key, title: i.title }));
+  return [...all.filter((r) => r.planId !== planId), { planId, picks, at, changed: Boolean(before) }];
+}
+
+export function picksNew(all: PlanPicks[], seen: string | null): boolean {
+  return all.some((r) => seen === null || Date.parse(r.at) > Date.parse(seen));
+}

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parsePlans, parsePlansRead, upsertPlan, removePlan, movePlan, readyPlans, planStatus, plansWaiting, markPlanRead,
-  parsePlanForm, readPlanFile, PLAN_LIMITS, type Plan,
+  parsePlanForm, readPlanFile, PLAN_LIMITS, sendPicks, parsePlanPicks, picksNew, type Plan,
 } from '../worker/plans';
 
 const id = (n: number) => `${String(n).repeat(8)}-${String(n).repeat(4)}-4${String(n).repeat(3)}-8${String(n).repeat(3)}-${String(n).repeat(12)}`;
@@ -75,5 +75,29 @@ describe('the form and the file', () => {
     expect(bad.ok === false && bad.error).toMatch(/isn't UTF-8 text/);
     expect((await readPlanFile(new File([new Uint8Array([1])], 'photo.jpg', { type: 'image/jpeg' }))).ok).toBe(false);
     expect((await readPlanFile(new File([new TextEncoder().encode('hi')], 'notes.txt', { type: 'text/plain' }))).ok).toBe(true);
+  });
+});
+
+describe('her picks', () => {
+  const items = [{ key: 'a', title: 'A' }, { key: 'b', title: 'B' }, { key: 'c', title: 'C' }];
+  it('saves what she ticked, in his order, and ignores anything unknown', () => {
+    const all = sendPicks([], id(1), items, ['a', 'b', 'c'], ['c', 'a', 'zzz'], '2026-01-02T00:00:00.000Z');
+    expect(all).toEqual([{ planId: id(1), picks: [items[0], items[2]], at: '2026-01-02T00:00:00.000Z', changed: false }]);
+  });
+  it('keeps picks from a list she did not send, and marks a resend as changed', () => {
+    const first = sendPicks([], id(1), items, ['a', 'b', 'c'], ['a', 'c'], '2026-01-02T00:00:00.000Z');
+    const second = sendPicks(first, id(1), items, ['b', 'c'], ['b'], '2026-01-03T00:00:00.000Z');
+    expect(second[0].picks.map((p) => p.key)).toEqual(['a', 'b']);
+    expect(second[0].changed).toBe(true);
+  });
+  it('reads stored picks, dropping bad rows, and knows when something is new to him', () => {
+    expect(parsePlanPicks(null)).toEqual([]);
+    expect(parsePlanPicks(JSON.stringify([{ planId: id(1), picks: [{ key: 'a', title: 'A' }], at: '2026-01-02T00:00:00.000Z', changed: false }, { x: 1 }]))).toHaveLength(1);
+    expect(() => parsePlanPicks('{ nope')).toThrow();
+    const all = sendPicks([], id(1), items, ['a'], ['a'], '2026-01-02T00:00:00.000Z');
+    expect(picksNew(all, null)).toBe(true);
+    expect(picksNew(all, '2026-01-01T00:00:00.000Z')).toBe(true);
+    expect(picksNew(all, '2026-01-02T00:00:00.000Z')).toBe(false);
+    expect(picksNew([], null)).toBe(false);
   });
 });

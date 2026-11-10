@@ -46,8 +46,9 @@ import {
 import { giftPage, giftErrorPage, giftAdminPage } from './gift-views';
 import {
   parsePlans, parsePlansRead, upsertPlan, removePlan, movePlan, readyPlans, planStatus, plansWaiting, markPlanRead,
-  parsePlanForm, readPlanFile, PLAN_FILE_NEEDED, type Plan, type PlanDraft,
+  parsePlanForm, readPlanFile, PLAN_FILE_NEEDED, parsePlanPicks, sendPicks, picksNew, type Plan, type PlanDraft,
 } from './plans';
+import { renderMarkdown } from './markdown';
 import { planPage } from './plans-views';
 import type { Env, KV, R2 } from './types';
 
@@ -79,8 +80,11 @@ const GIFT_PHOTOS_KEY = 'gift_photos';
 const GIFT_BOOKING_KEY = 'gift_booking';
 const PLANS_KEY = 'plans';
 const PLANS_READ_KEY = 'plans_read';
+const PLAN_PICKS_KEY = 'plan_picks';
+const PLAN_PICKS_SEEN_KEY = 'plan_picks_seen';
 const UUID_PART = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const PLAN_ROUTE = new RegExp(`^(/admin)?/reading-room/plans?/(${UUID_PART})$`);
+const PICKS_ROUTE = new RegExp(`^/reading-room/plans/(${UUID_PART})/picks$`);
 const FLASH: Record<string, string> = {
   'photos-added': 'Photos added.', 'photo-removed': 'Photo removed.', cleared: 'Her picks are cleared.',
   saved: 'Saved.', deleted: 'Deleted.', 'gift-cleared': 'Her side of the gift is cleared.', booked: 'Marked booked.', unbooked: 'Booking undone. She can pick a day again.', 'meeting-saved': 'Meeting saved.', 'meeting-removed': 'Meeting removed.',
@@ -634,10 +638,9 @@ async function showReadingRoom(request: Request, kv: KV, cfg: Config, now: Date,
 }
 
 async function showPlan(request: Request, kv: KV, cfg: Config, now: Date, id: string, asAdmin: boolean): Promise<Response> {
-  if (asAdmin) {
-    if (!(await adminSession(request, cfg, now))) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
-  } else if (!(await readerSession(request, cfg, now))) {
-    return html(readerLoginPage({ action: `${cfg.base}/login` }));
+  const session = asAdmin ? await adminSession(request, cfg, now) : await readerSession(request, cfg, now);
+  if (!session) {
+    return html(asAdmin ? adminLoginPage({ action: `${cfg.base}/admin/login` }) : readerLoginPage({ action: `${cfg.base}/login` }));
   }
   const plans = await tryLoad(() => loadPlans(kv), 'plans');
   if (!plans) return html(readingRoomErrorPage(), 500);
@@ -647,7 +650,43 @@ async function showPlan(request: Request, kv: KV, cfg: Config, now: Date, id: st
   // Opening it is what puts out its dot; nothing is written when she has already read this version.
   const read = await tryLoad(() => loadPlansRead(kv), 'plan reads');
   if (read && planStatus(plan, read) !== 'read') await kv.put(PLANS_READ_KEY, JSON.stringify(markPlanRead(read, plan, now.toISOString())));
-  return html(planPage({ plan, back: cfg.base }));
+  const sent = (await tryLoad(() => loadPlanPicks(kv), 'plan picks'))?.find((x) => x.planId === plan.id);
+  return html(planPage({
+    plan, back: cfg.base,
+    picks: {
+      action: `${cfg.base}/reading-room/plans/${plan.id}/picks`, csrf: await csrfToken(session, cfg.secret),
+      chosen: sent?.picks.map((p) => p.key) ?? [], sent: Boolean(sent),
+    },
+  }));
+}
+
+async function loadPlanPicks(kv: KV) {
+  return parsePlanPicks(await kv.get(PLAN_PICKS_KEY));
+}
+
+/** True while she has sent picks he has not looked at in the reading room admin. */
+async function picksWaitingForHim(kv: KV): Promise<boolean> {
+  const all = await tryLoad(() => loadPlanPicks(kv), 'plan picks');
+  return Boolean(all && picksNew(all, await kv.get(PLAN_PICKS_SEEN_KEY)));
+}
+
+async function handlePlanPicks(request: Request, kv: KV, cfg: Config, now: Date, id: string): Promise<Response> {
+  const session = await readerSession(request, cfg, now);
+  if (!session) return redirect(cfg.base);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  const plans = await tryLoad(() => loadPlans(kv), 'plans');
+  if (!plans) return html(readingRoomErrorPage(), 500);
+  const plan = readyPlans(plans).find((p) => p.id === id);
+  if (!plan) return notFound();
+  const items = renderMarkdown(plan.markdown, plan.title).items;
+  if (!items.length) return notFound();
+  const all = await tryLoad(() => loadPlanPicks(kv), 'plan picks');
+  if (!all) return html(readingRoomErrorPage(), 500);
+  const values = (name: string) => form.getAll(name).filter((v): v is string => typeof v === 'string');
+  await kv.put(PLAN_PICKS_KEY, JSON.stringify(sendPicks(all, plan.id, items, values('all'), values('pick'), now.toISOString())));
+  const back = /^picks-\d{1,3}$/.test(field(form, 'back')) ? field(form, 'back') : 'picks-1';
+  return redirect(`${cfg.base}/reading-room/plans/${plan.id}#${back}`);
 }
 
 // Checks the reader's session and token and that the book exists; returns its id and form, or the response to send.
@@ -734,6 +773,7 @@ async function renderAdmin(
     meetings: meetings ?? [],
     replies: replies ?? [],
     csrf: await csrfToken(session, cfg.secret),
+    roomNew: await picksWaitingForHim(kv),
   }), status);
 }
 
@@ -1011,6 +1051,7 @@ async function renderReadingRoomAdmin(kv: KV, cfg: Config, session: string, view
     },
     plans: {
       plans: plans ?? [], read: plansRead ?? [], editing: view.editingPlan, error: view.planError,
+      picks: (await tryLoad(() => loadPlanPicks(kv), 'plan picks')) ?? [],
       draft: view.planDraft ?? (view.editingPlan ? { title: view.editingPlan.title, line: view.editingPlan.line, ready: view.editingPlan.ready } : { title: '', line: '', ready: false }),
     },
     flash: view.flash,
@@ -1021,6 +1062,8 @@ async function renderReadingRoomAdmin(kv: KV, cfg: Config, session: string, view
 async function showReadingRoomAdmin(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
   const session = await adminSession(request, cfg, now);
   if (!session) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
+  // Looking here is what puts out the dot for her picks on the admin page.
+  if (await picksWaitingForHim(kv)) await kv.put(PLAN_PICKS_SEEN_KEY, now.toISOString());
   const editId = url.searchParams.get('edit');
   const editing = editId ? (await tryLoad(() => loadBooks(kv), 'books'))?.find((b) => b.id === editId) : undefined;
   const songId = url.searchParams.get('song');
@@ -1612,6 +1655,8 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
   try {
     const method = request.method === 'HEAD' ? 'GET' : request.method;
     const sub = path.slice(base.length);
+    const picksPath = PICKS_ROUTE.exec(sub);
+    if (picksPath && method === 'POST') return await handlePlanPicks(request, kv, cfg, now, picksPath[1]);
     const planPath = PLAN_ROUTE.exec(sub);
     if (planPath && method === 'GET' && (sub.includes('/plans/') !== Boolean(planPath[1]))) return await showPlan(request, kv, cfg, now, planPath[2], Boolean(planPath[1]));
     const media = MEDIA_ROUTE.exec(sub);

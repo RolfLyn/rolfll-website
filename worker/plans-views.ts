@@ -1,6 +1,6 @@
 import { escapeHtml, shell, READER_FONTS } from './views';
-import { renderMarkdown } from './markdown';
-import { readyPlans, planStatus, plansWaiting, PLAN_LIMITS, type Plan, type PlanRead, type PlanDraft } from './plans';
+import { renderMarkdown, type PickOptions } from './markdown';
+import { readyPlans, planStatus, plansWaiting, PLAN_LIMITS, type Plan, type PlanRead, type PlanDraft, type PlanPicks } from './plans';
 
 const CAVEAT = '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@500&display=swap">';
 
@@ -138,6 +138,19 @@ body { margin: 0; min-height: 100vh; background: #efe6d6; color: #3a2e28; font-f
 .doc .footnotes { margin-top: 2rem; padding-top: 0.6rem; border-top: 1px solid #eadfcb; font-size: 1rem; color: #6d5d50; }
 .doc .footnotes h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .doc sup a { text-decoration: none; padding: 0 0.1rem; }
+.picks { margin: 0.8rem 0 1rem; }
+.pick-list { list-style: none; margin: 0; padding: 0; }
+.doc .pick-list li { margin: 0 0 0.6rem; }
+.pick { position: relative; display: flex; gap: 0.7rem; align-items: flex-start; padding: 0.75rem 0.85rem; background: #fffdf8; border: 1px solid #eadfcb; border-radius: 0.6rem; box-shadow: 0 2px 6px rgba(80, 50, 20, 0.06); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: border-color 0.2s, box-shadow 0.2s; }
+.pick input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.pick .heart { flex: 0 0 auto; width: 1.5rem; height: 1.5rem; margin-top: 0.1rem; background: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 20.5s-7.5-4.6-9.3-9.2C1.5 8 3.6 4.5 7.1 4.5c2 0 3.6 1.1 4.9 2.8 1.3-1.7 2.9-2.8 4.9-2.8 3.5 0 5.6 3.5 4.4 6.8-1.8 4.6-9.3 9.2-9.3 9.2z' fill='none' stroke='%23b0645a' stroke-width='1.6'/%3E%3C/svg%3E"); }
+.pick-body p { margin: 0; }
+.pick:has(input:checked) { border-color: #d9b26a; box-shadow: 0 0 0 2px rgba(217, 178, 106, 0.55), 0 2px 8px rgba(80, 50, 20, 0.1); background: #fff8ea; }
+.pick input:checked ~ .heart { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 20.5s-7.5-4.6-9.3-9.2C1.5 8 3.6 4.5 7.1 4.5c2 0 3.6 1.1 4.9 2.8 1.3-1.7 2.9-2.8 4.9-2.8 3.5 0 5.6 3.5 4.4 6.8-1.8 4.6-9.3 9.2-9.3 9.2z' fill='%23b0645a' stroke='%23b0645a' stroke-width='1.6'/%3E%3C/svg%3E"); }
+.pick input:focus-visible ~ .heart { outline: 2px solid #d9b26a; outline-offset: 3px; border-radius: 50%; }
+.pick input:disabled ~ .heart { opacity: 0.6; }
+.pick-send { display: block; margin: 1rem auto 0; padding: 0.65rem 1.6rem; border: 0; border-radius: 999px; background: #b0645a; color: #fbf5ea; font: 600 1.15rem 'Cormorant Garamond', Georgia, serif; cursor: pointer; }
+.pick-sent { margin: 0.7rem 0 0; text-align: center; font-family: 'Caveat', cursive; font-size: 1.45rem; color: #b0645a; }
 .end { display: flex; justify-content: space-between; gap: 1rem; margin: 1.4rem 0.4rem 0; }
 .end a { color: #8c7b6c; font-style: italic; font-size: 1.1rem; text-decoration: none; }
 `;
@@ -170,8 +183,12 @@ export const PLAN_SCRIPT = `<script>
 })();
 </script>`;
 
-export function planPage({ plan, back, preview = false }: { plan: Plan; back: string; preview?: boolean }): string {
-  const { html, headings } = renderMarkdown(plan.markdown, plan.title);
+export function planPage({ plan, back, preview = false, picks }: {
+  plan: Plan; back: string; preview?: boolean;
+  /** Her "What I'll do" form; without it (a preview) the cards show but cannot be sent. */
+  picks?: PickOptions;
+}): string {
+  const { html, headings } = renderMarkdown(plan.markdown, plan.title, picks ?? { chosen: [] });
   const backTo = preview ? back : `${back}/reading-room?open=plans`;
   const contents = headings.length >= 3
     ? `<nav class="contents"><p>In this letter</p><ol>${headings.map((h) => `<li><a href="#${escapeHtml(h.id)}">${escapeHtml(h.text)}</a></li>`).join('')}</ol></nav>`
@@ -196,7 +213,17 @@ ${PLAN_SCRIPT}`, `${READER_FONTS}\n${CAVEAT}`);
 
 export function plansAdmin(d: {
   base: string; csrf: string; plans: Plan[]; read: PlanRead[]; draft: PlanDraft; editing?: Plan; error?: string;
+  picks?: PlanPicks[];
 }): string {
+  const asked = (p: Plan) => {
+    const total = renderMarkdown(p.markdown, p.title).items.length;
+    if (!total) return '';
+    const sent = d.picks?.find((x) => x.planId === p.id);
+    if (!sent) return '<p class="hint">What I\'ll do: she hasn\'t sent her picks yet.</p>';
+    const when = new Date(sent.at).toISOString().slice(0, 10);
+    return `<p class="text"><strong>${escapeHtml(`She'd like ${sent.picks.length} of ${total}`)}</strong> <span class="hint">sent ${escapeHtml(when)}${sent.changed ? ', changed' : ''}</span></p>
+  ${sent.picks.length ? `<ul class="asked">${sent.picks.map((x) => `<li>${escapeHtml(x.title)}</li>`).join('')}</ul>` : ''}`;
+  };
   const csrf = `<input type="hidden" name="csrf" value="${escapeHtml(d.csrf)}">`;
   const at = (path: string) => escapeHtml(`${d.base}/admin/reading-room${path}`);
   const idField = (id: string) => `<input type="hidden" name="id" value="${escapeHtml(id)}">`;
@@ -217,6 +244,7 @@ export function plansAdmin(d: {
     </span>
   </div>
   ${p.line ? `<p class="text">${escapeHtml(p.line)}</p>` : ''}
+  ${asked(p)}
 </li>`;
   }).join('\n');
   const e = d.editing;

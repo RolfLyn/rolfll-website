@@ -443,6 +443,8 @@ export interface AdminPageData {
   /** Date of the note being edited, so a changed date moves it instead of copying it. */
   original?: string;
   csrf: string;
+  /** Her picks from a document came in and he hasn't looked yet. */
+  roomNew?: boolean;
   flash?: string;
   error?: string;
   meetings?: Meeting[];
@@ -506,7 +508,7 @@ export function adminPage(d: AdminPageData): string {
 
   return adminShell(`
 <h1>Notes</h1>
-<p><a href="${escapeHtml(`${d.base}/admin/after-dark`)}">After dark ☾</a> · <a href="${escapeHtml(`${d.base}/admin/reading-room`)}">Reading room</a> · <a href="${escapeHtml(`${d.base}/admin/event`)}">Special event</a> · <a href="${escapeHtml(`${d.base}/admin/gift`)}">Gift</a></p>
+<p><a href="${escapeHtml(`${d.base}/admin/after-dark`)}">After dark ☾</a> · <a href="${escapeHtml(`${d.base}/admin/reading-room`)}">Reading room${d.roomNew ? ' <span class="dot" title="Her picks are in">&#9679;</span>' : ''}</a> · <a href="${escapeHtml(`${d.base}/admin/event`)}">Special event</a> · <a href="${escapeHtml(`${d.base}/admin/gift`)}">Gift</a></p>
 ${d.flash ? `<p class="flash">${escapeHtml(d.flash)}</p>` : ''}
 ${errorLine(d.error)}
 <h2>Showing today (${formatDate(d.today)})</h2>

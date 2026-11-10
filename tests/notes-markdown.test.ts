@@ -107,3 +107,58 @@ describe('rendering his Markdown', () => {
     expect(d.body.textContent).toContain('<script>alert(1)</script>');
   });
 });
+
+describe('"What I\'ll do" picks', () => {
+  const doc = [
+    '## Before', '', '- not a pick', '',
+    "## What I'll do", '', 'Intro line.', '',
+    '- **Visit schools.** We go together.', '- **Paperwork** sorted by me.', '- A plain one without bold', '',
+    'Closing line.', '', '## After', '', '- also not a pick',
+  ].join('\n');
+  const opts = { action: '/for-you/reading-room/plans/x/picks', csrf: 'tok', chosen: ['paperwork'] };
+
+  it('finds the items by their bold titles', () => {
+    expect(renderMarkdown(doc, 'T').items).toEqual([
+      { key: 'visit schools.', title: 'Visit schools.' }, { key: 'paperwork', title: 'Paperwork' },
+      { key: 'a plain one without bold', title: 'A plain one without bold' },
+    ]);
+  });
+
+  it('turns only that section into cards she can tick and send', () => {
+    const d = dom(renderMarkdown(doc, 'T', opts).html);
+    const form = d.querySelector('form.picks')!;
+    expect(form.getAttribute('method')).toBe('post');
+    expect(form.getAttribute('action')).toBe(opts.action);
+    expect(form.querySelector('input[name="csrf"]')!.getAttribute('value')).toBe('tok');
+    const boxes = [...form.querySelectorAll('input[name="pick"]')];
+    expect(boxes.map((b) => b.getAttribute('value'))).toEqual(['visit schools.', 'paperwork', 'a plain one without bold']);
+    expect(boxes.map((b) => b.hasAttribute('checked'))).toEqual([false, true, false]);
+    expect([...form.querySelectorAll('input[name="all"]')]).toHaveLength(3);
+    expect(form.querySelector('button')!.textContent).toBe('These, please');
+    expect(form.textContent).toContain('We go together.');
+    expect(d.querySelectorAll('form')).toHaveLength(1);
+    expect(d.body.textContent).toContain('not a pick');
+  });
+
+  it('shows the cards without a form in a preview', () => {
+    const d = dom(renderMarkdown(doc, 'T', { chosen: [] }).html);
+    expect(d.querySelector('form')).toBeNull();
+    expect(d.querySelectorAll('input[name="pick"][disabled]')).toHaveLength(3);
+  });
+
+  it('thanks her once she has sent them', () => {
+    expect(renderMarkdown(doc, 'T', { ...opts, sent: true }).html).toContain("Got it. I&#39;ll take care of these.");
+    expect(renderMarkdown(doc, 'T', opts).html).not.toContain('Got it.');
+  });
+
+  it('knows the heading however the apostrophe is written', () => {
+    for (const h of ["What I'll do", 'What I’ll do', 'What I will do', '**What I\'ll do**']) {
+      expect(renderMarkdown(`## ${h}\n\n- **One** x`, 'T').items).toHaveLength(1);
+    }
+    expect(renderMarkdown('## What we do\n\n- **One** x', 'T').items).toHaveLength(0);
+  });
+
+  it('keeps plain rendering when no picks are asked for', () => {
+    expect(dom(renderMarkdown(doc, 'T').html).querySelector('input')).toBeNull();
+  });
+});
