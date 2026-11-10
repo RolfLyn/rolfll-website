@@ -140,6 +140,7 @@ body { margin: 0; min-height: 100vh; background: #efe6d6; color: #3a2e28; font-f
 .doc sup a { text-decoration: none; padding: 0 0.1rem; }
 .picks { margin: 0.8rem 0 1rem; }
 .pick-list { list-style: none; margin: 0; padding: 0; }
+.doc .pick-list { padding-left: 0; }
 .doc .pick-list li { margin: 0 0 0.6rem; }
 .pick { position: relative; display: flex; gap: 0.7rem; align-items: flex-start; padding: 0.75rem 0.85rem; background: #fffdf8; border: 1px solid #eadfcb; border-radius: 0.6rem; box-shadow: 0 2px 6px rgba(80, 50, 20, 0.06); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: border-color 0.2s, box-shadow 0.2s; }
 .pick input { position: absolute; opacity: 0; width: 1px; height: 1px; }
