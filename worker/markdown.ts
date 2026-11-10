@@ -22,7 +22,9 @@ export function renderMarkdown(source: string, title: string): Rendered {
   const used = new Map<string, number>();
   // The title is already shown above the paper, so a first "# Title" that repeats it is left out.
   const first = source.match(/^\s*#[ \t]+(.+?)[ \t]*#*[ \t]*(?:\n|$)/);
-  const body = first && first[1].trim().toLowerCase() === title.trim().toLowerCase() ? source.slice(first[0].length) : source;
+  const kept = first && first[1].trim().toLowerCase() === title.trim().toLowerCase() ? source.slice(first[0].length) : source;
+  // Typora's [TOC] marker: the page already shows its own contents list.
+  const body = kept.replace(/^[ \t]*\[toc\][ \t]*$/gim, '');
 
   const marked = new Marked({ gfm: true, breaks: false });
   marked.use(markedFootnote());

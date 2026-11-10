@@ -66,6 +66,12 @@ describe('rendering his Markdown', () => {
     expect(dom(render('# Another\n\nText').html).querySelector('h1')!.textContent).toBe('Another');
   });
 
+  it("leaves out Typora's [TOC] marker, since the contents list is automatic", () => {
+    const { html } = render('Intro\n\n[TOC]\n\n## A\n\n[toc]');
+    expect(html).not.toMatch(/\[toc\]/i);
+    expect(html).toContain('Intro');
+  });
+
   it('keeps Typora line breaks', () => {
     expect(dom(render('one<br>two<br/>three').html).querySelectorAll('br')).toHaveLength(2);
   });

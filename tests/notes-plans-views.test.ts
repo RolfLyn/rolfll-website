@@ -34,6 +34,12 @@ describe('the desk', () => {
     expect(desk([p], read)).toContain('class="desk-item"');
     expect(desk([{ ...p, updated: '2026-01-03T00:00:00.000Z' }], read)).toContain('UPDATED');
   });
+  it('uses its own class names, so the bookshelf styles never tip its label on its side', () => {
+    const html = desk([plan(1)]);
+    expect(html).toContain('class="folder-name"');
+    expect(html).not.toMatch(/class="(title|hint)"/);
+  });
+
   it('carries its own script', () => {
     expect(desk([plan(1)])).toContain(DESK_SCRIPT);
   });

@@ -20,9 +20,9 @@ const DESK_STYLE = `
 .pen { position: absolute; left: 6.2rem; bottom: 0.4rem; width: 4rem; height: 0.38rem; border-radius: 0.2rem; background: linear-gradient(90deg, #1b1b1b 0 75%, #d9b26a 75% 80%, #1b1b1b 80%); transform: rotate(-14deg); }
 .folder { position: absolute; right: 1rem; bottom: 0.15rem; width: 9.4rem; height: 6.5rem; border-radius: 0.25rem 0.45rem 0.45rem 0.25rem; background: linear-gradient(135deg, #8a5a34, #5c3a20); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.06), inset 0.4rem 0 0 #4a2e18, 0 0.4rem 0.8rem rgba(0, 0, 0, 0.5); transform: rotate(-4deg); }
 .folder .stitch { position: absolute; inset: 0.45rem 0.45rem 0.45rem 0.8rem; border: 1px dashed rgba(242, 200, 121, 0.45); border-radius: 0.2rem; }
-.folder .ribbon { position: absolute; top: 0; bottom: 0; left: 62%; width: 0.45rem; background: #b0645a; }
-.folder .knot { position: absolute; left: calc(62% - 0.55rem); top: 2.6rem; width: 1.55rem; height: 1.1rem; border-radius: 50%; border: 0.25rem solid #b0645a; }
-.folder .title { position: absolute; left: 1.35rem; top: 2.1rem; font-family: 'Caveat', cursive; font-size: 1.5rem; color: #f2c879; transform: rotate(-2deg); }
+.folder .ribbon { position: absolute; top: 0; bottom: 0; left: 80%; width: 0.45rem; background: #b0645a; }
+.folder .knot { position: absolute; left: calc(80% - 0.55rem); top: 2.6rem; width: 1.55rem; height: 1.1rem; border-radius: 50%; border: 0.25rem solid #b0645a; }
+.folder .folder-name { position: absolute; left: 1.1rem; top: 2.1rem; font-family: 'Caveat', cursive; font-size: 1.45rem; color: #f2c879; transform: rotate(-2deg); }
 .desk-surface { display: block; height: 0.9rem; background: linear-gradient(#8a6040, #5e3f27); border-radius: 3px; box-shadow: 0 6px 0 #2e1f14; }
 .desk-under { position: relative; display: flex; justify-content: space-between; height: 4.4rem; padding: 0 1rem; }
 .desk-under i { width: 0.6rem; background: linear-gradient(90deg, #4a3220, #33221a); }
@@ -34,7 +34,7 @@ const DESK_STYLE = `
 .plans-wrap[hidden] { display: none; }
 .plans-sheet { width: 100%; max-width: 32rem; max-height: 88vh; overflow-y: auto; padding: 1.3rem 1.2rem calc(1.3rem + env(safe-area-inset-bottom, 0px)); border-radius: 1.2rem 1.2rem 0 0; background: #fbf5ea; color: #3a2e28; }
 .plans-sheet h2 { margin: 0; font-weight: 500; font-size: 1.6rem; }
-.plans-sheet .hint { margin: 0.2rem 0 1rem; color: #8c7b6c; font-style: italic; }
+.plans-sheet .lead { margin: 0.2rem 0 1rem; color: #8c7b6c; font-style: italic; }
 .letter { position: relative; display: block; margin: 0 0 0.75rem; padding: 0.85rem 0.9rem 0.85rem 1.1rem; background: #fffdf8; border: 1px solid #eadfcb; border-radius: 0.4rem; box-shadow: 0 2px 6px rgba(80, 50, 20, 0.08); color: inherit; text-decoration: none; }
 .letter::before { content: ''; position: absolute; left: 0; top: 0.6rem; bottom: 0.6rem; width: 3px; border-radius: 2px; background: #b0645a; }
 .letter b { display: block; font-weight: 600; font-size: 1.25rem; }
@@ -74,7 +74,7 @@ export function planDesk({ plans, read, home, open, docBase }: {
 <section class="desk">
 <div class="glow"></div>
 <a class="desk-item${plansWaiting(plans, read) ? ' new' : ''}" href="${escapeHtml(`${home}?open=plans`)}">
-<span class="desk-top"><span class="lamp"><span class="shade"></span><span class="stem"></span><span class="foot"></span></span><span class="ink"></span><span class="pen"></span><span class="folder"><span class="stitch"></span><span class="ribbon"></span><span class="knot"></span><span class="title">Our plans</span></span></span>
+<span class="desk-top"><span class="lamp"><span class="shade"></span><span class="stem"></span><span class="foot"></span></span><span class="ink"></span><span class="pen"></span><span class="folder"><span class="stitch"></span><span class="ribbon"></span><span class="knot"></span><span class="folder-name">Our plans</span></span></span>
 <span class="desk-surface"></span>
 <span class="desk-under"><i></i><span class="drawer"></span><i></i></span>
 <span class="name">Our plans</span>
@@ -82,7 +82,7 @@ export function planDesk({ plans, read, home, open, docBase }: {
 </section>
 <div class="plans-wrap" id="sheet-plans"${open ? '' : ' hidden'}><article class="plans-sheet" role="dialog" aria-label="Our plans">
 <h2>Our plans</h2>
-<p class="hint">Things I worked out for us.</p>
+<p class="lead">Things I worked out for us.</p>
 ${letters}
 <a class="plans-close" href="${escapeHtml(home)}">Close</a>
 </article></div>
