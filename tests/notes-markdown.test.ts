@@ -66,6 +66,21 @@ describe('rendering his Markdown', () => {
     expect(dom(render('# Another\n\nText').html).querySelector('h1')!.textContent).toBe('Another');
   });
 
+  it('keeps footnote labels from breaking into the markup', () => {
+    const { html } = render('Hi[^x" onmouseover="alert(1)]\n\n[^x" onmouseover="alert(1)]: note');
+    const d = dom(html);
+    for (const el of d.querySelectorAll('*')) {
+      for (const a of el.attributes) expect(a.name.startsWith('on')).toBe(false);
+    }
+    expect(d.body.textContent).toContain('note');
+  });
+
+  it('lists a heading with a link by its words, with the id Typora gives it', () => {
+    const { html, headings } = render('## See [the school](https://example.com) now\n\n## Two\n\n## Three');
+    expect(headings[0]).toEqual({ id: 'see-the-school-now', text: 'See the school now' });
+    expect(dom(html).querySelector('h2#see-the-school-now a[href="https://example.com"]')).toBeTruthy();
+  });
+
   it("leaves out Typora's [TOC] marker, since the contents list is automatic", () => {
     const { html } = render('Intro\n\n[TOC]\n\n## A\n\n[toc]');
     expect(html).not.toMatch(/\[toc\]/i);

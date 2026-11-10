@@ -13,7 +13,6 @@ function slug(text: string): string {
   return text.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
 }
 
-const plainText = (md: string) => md.replace(/[*_`~]/g, '').trim();
 
 const BR = /^<br\s*\/?>$/i;
 
@@ -27,11 +26,13 @@ export function renderMarkdown(source: string, title: string): Rendered {
   const body = kept.replace(/^[ \t]*\[toc\][ \t]*$/gim, '');
 
   const marked = new Marked({ gfm: true, breaks: false });
-  marked.use(markedFootnote());
+  // A fixed back-link label: the library puts the label text into an attribute unescaped.
+  marked.use(markedFootnote({ backRefLabel: 'Back to the text' }));
   marked.use({
     renderer: {
-      heading(this: Renderer, { tokens, depth, text }: Tokens.Heading) {
-        const plain = plainText(text);
+      heading(this: Renderer, { tokens, depth }: Tokens.Heading) {
+        // Its words without any Markdown, so a heading with a link lists and links the way Typora does.
+        const plain = this.parser.parseInline(tokens, this.parser.textRenderer).replace(/\s+/g, ' ').trim();
         const base = slug(plain) || 'section';
         const seen = used.get(base) ?? 0;
         used.set(base, seen + 1);
