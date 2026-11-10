@@ -39,6 +39,11 @@ import {
   readerEvent, hasWaiting, openPhotoKeys, photoNamesInUse, EMPTY_PICKS, type SpecialEvent, type EventPhoto, type EventPicks,
 } from './event';
 import { eventPage, eventErrorPage, eventAdminPage } from './event-views';
+import {
+  checkGift, parseStoredGift, parseGiftState, emptyGiftState, unwrapGift, pickGiftDay, parseBookingLines, markBooked,
+  undoBooked, seeBooked, isGiftShowing, readerGift, giftWaiting, giftPhotoKeys, giftPhotoNames, type Gift, type GiftState,
+} from './gift';
+import { giftPage, giftErrorPage, giftAdminPage } from './gift-views';
 import type { Env, KV, R2 } from './types';
 
 const NOTES_KEY = 'notes';
@@ -63,9 +68,12 @@ const LIST_SETTINGS_KEY = 'list_settings';
 const EVENT_KEY = 'event';
 const EVENT_PICKS_KEY = 'event_picks';
 const EVENT_PHOTOS_KEY = 'event_photos';
+const GIFT_KEY = 'gift';
+const GIFT_STATE_KEY = 'gift_state';
+const GIFT_PHOTOS_KEY = 'gift_photos';
 const FLASH: Record<string, string> = {
   'photos-added': 'Photos added.', 'photo-removed': 'Photo removed.', cleared: 'Her picks are cleared.',
-  saved: 'Saved.', deleted: 'Deleted.', 'meeting-saved': 'Meeting saved.', 'meeting-removed': 'Meeting removed.',
+  saved: 'Saved.', deleted: 'Deleted.', 'gift-cleared': 'Her side of the gift is cleared.', booked: 'Marked booked.', unbooked: 'Booking undone. She can pick a day again.', 'meeting-saved': 'Meeting saved.', 'meeting-removed': 'Meeting removed.',
 };
 const EXPIRED = 'That form expired. Go back, reload, and try again.';
 const INVALID = `Needs a real date and a message of at most ${MAX_LENGTH} characters.`;
@@ -116,6 +124,18 @@ async function loadEventPhotos(kv: KV): Promise<EventPhoto[]> {
 
 async function loadEventPicks(kv: KV, eventId: string): Promise<EventPicks> {
   return parsePicks(await kv.get(EVENT_PICKS_KEY), eventId);
+}
+
+async function loadGift(kv: KV): Promise<Gift | null> {
+  return parseStoredGift(await kv.get(GIFT_KEY));
+}
+
+async function loadGiftPhotos(kv: KV): Promise<EventPhoto[]> {
+  return parsePhotos(await kv.get(GIFT_PHOTOS_KEY));
+}
+
+async function loadGiftState(kv: KV, giftId: string): Promise<GiftState> {
+  return parseGiftState(await kv.get(GIFT_STATE_KEY), giftId);
 }
 
 async function loadNotes(kv: KV): Promise<Note[]> {
@@ -288,7 +308,8 @@ async function keysInUse(kv: KV, notes: Note[], entries?: Entry[], books?: Book[
   const photos = (await tryLoad(() => loadEventPhotos(kv), 'event photos')) ?? [];
   const songs = (await tryLoad(() => loadSongs(kv), 'songs')) ?? [];
   const album = (await tryLoad(() => loadAlbum(kv), 'album')) ?? [];
-  return [
+  const giftPhotos = (await tryLoad(() => loadGiftPhotos(kv), 'gift photos')) ?? [];
+  return [...giftPhotos.map((p) => p.key),
     ...notes.flatMap(attachmentKeys), ...entryKeys(others), ...bookKeys(shelf), ...photos.map((p) => p.key),
     ...songKeys(songs), ...albumKeys(album),
   ];
@@ -326,6 +347,65 @@ async function eventWayIn(kv: KV, cfg: Config, today: string): Promise<{ href: s
   const photos = (await tryLoad(() => loadEventPhotos(kv), 'event photos')) ?? [];
   const picks = await tryLoad(() => loadEventPicks(kv, event.id), 'event picks');
   return { href: `${cfg.base}/event`, title: event.title, waiting: Boolean(picks && hasWaiting(readerEvent(event, picks, photos, today))) };
+}
+
+async function giftWayIn(kv: KV, cfg: Config, today: string): Promise<{ href: string; title: string; waiting: boolean } | null> {
+  const gift = await tryLoad(() => loadGift(kv), 'gift');
+  if (!gift || !isGiftShowing(gift, today)) return null;
+  const state = await tryLoad(() => loadGiftState(kv, gift.id), 'gift state');
+  return state ? { href: `${cfg.base}/gift`, title: gift.title, waiting: giftWaiting(gift, state) } : null;
+}
+
+async function showGift(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
+  const session = await readerSession(request, cfg, now);
+  if (!session) return html(readerLoginPage({ action: `${cfg.base}/login` }));
+  const today = noteDay(now);
+  let gift: Gift | null;
+  let photos: EventPhoto[];
+  let state: GiftState;
+  try {
+    gift = await loadGift(kv);
+    if (!gift || !isGiftShowing(gift, today)) return notFound();
+    photos = await loadGiftPhotos(kv);
+    state = await loadGiftState(kv, gift.id);
+  } catch (error) {
+    console.error(error);
+    return html(giftErrorPage(), 500);
+  }
+  const view = readerGift(gift, state, photos, today);
+  // Seeing the booked page is what puts out the dot on her notes page.
+  if (view.stage === 'booked' && giftWaiting(gift, state)) {
+    await kv.put(GIFT_STATE_KEY, JSON.stringify(seeBooked(state, now.toISOString())));
+  }
+  return html(giftPage({
+    view, home: `${cfg.base}/gift`, mediaBase: `${cfg.base}/media`, saveAction: `${cfg.base}/gift/save`,
+    csrf: await csrfToken(session, cfg.secret), back: cfg.base,
+  }));
+}
+
+async function handleGiftSave(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
+  const session = await readerSession(request, cfg, now);
+  if (!session) return redirect(cfg.base);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  const today = noteDay(now);
+  let gift: Gift | null;
+  let state: GiftState;
+  try {
+    gift = await loadGift(kv);
+    if (!gift || !isGiftShowing(gift, today)) return notFound();
+    state = await loadGiftState(kv, gift.id);
+  } catch (error) {
+    console.error(error);
+    return html(giftErrorPage(), 500);
+  }
+  const at = now.toISOString();
+  const what = field(form, 'do');
+  const next = what === 'unwrap' ? unwrapGift(state, at) : what === 'pick' ? pickGiftDay(state, gift, field(form, 'day'), today, at) : null;
+  if (!next) return notFound();
+  if (next !== state) await kv.put(GIFT_STATE_KEY, JSON.stringify(next));
+  if (field(form, 'quiet') === '1') return quietDone();
+  return redirect(`${cfg.base}/gift`);
 }
 
 async function showEvent(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
@@ -417,6 +497,7 @@ async function showReader(request: Request, kv: KV, cfg: Config, now: Date, url:
   const played = await tryLoad(() => loadPlayed(kv), 'played books');
   return html(readerPage({
     event: await eventWayIn(kv, cfg, today),
+    gift: await giftWayIn(kv, cfg, day),
     reading: {
       href: `${cfg.base}/reading-room`,
       unread: Boolean(books && played && books.some((b) => !played.some((p) => p.id === b.id))) || await keepsakesWaiting(kv, cfg),
@@ -662,6 +743,15 @@ async function showMedia(
       const today = todayInCopenhagen(now);
       const event = await tryLoad(() => loadEvent(env.NOTES), 'event');
       if (!event || !isShowing(event, today) || !openPhotoKeys(event, photos, today).includes(key)) return notFound();
+    }
+    return (await serveMedia(env.MEDIA, key, request, 'no-store')) ?? notFound();
+  }
+  const giftPhotos = (await tryLoad(() => loadGiftPhotos(env.NOTES), 'gift photos')) ?? [];
+  if (giftPhotos.some((p) => p.key === key)) {
+    if (!asAdmin) {
+      const today = noteDay(now);
+      const gift = await tryLoad(() => loadGift(env.NOTES), 'gift');
+      if (!gift || !isGiftShowing(gift, today) || !giftPhotoKeys(gift, giftPhotos).includes(key)) return notFound();
     }
     return (await serveMedia(env.MEDIA, key, request, 'no-store')) ?? notFound();
   }
@@ -920,6 +1010,136 @@ async function renderEventAdmin(
     inUse: event ? photoNamesInUse(event) : [], flash: view.flash,
     error: [view.error ?? '', unreadable].filter(Boolean).join(' ') || undefined,
   }), status);
+}
+
+async function renderGiftAdmin(
+  kv: KV, cfg: Config, session: string, now: Date, view: { text?: string; flash?: string; error?: string }, status = 200,
+): Promise<Response> {
+  const raw = await kv.get(GIFT_KEY);
+  const gift = await tryLoad(() => loadGift(kv), 'gift');
+  const photos = (await tryLoad(() => loadGiftPhotos(kv), 'gift photos')) ?? [];
+  const state = gift ? await tryLoad(() => loadGiftState(kv, gift.id), 'gift state') : null;
+  let text = view.text;
+  if (text === undefined) {
+    try {
+      text = raw ? JSON.stringify(JSON.parse(raw), null, 2) : '';
+    } catch {
+      text = raw ?? '';
+    }
+  }
+  const unreadable = raw !== null && !gift ? 'The saved gift could not be read. Fix it below and save.' : undefined;
+  return html(giftAdminPage({
+    base: cfg.base, csrf: await csrfToken(session, cfg.secret), text, photos, gift, state, today: noteDay(now),
+    flash: view.flash, error: [view.error, unreadable].filter(Boolean).join(' ') || undefined,
+  }), status);
+}
+
+async function showGiftAdmin(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
+  const session = await adminSession(request, cfg, now);
+  if (!session) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
+  const msg = url.searchParams.get('msg') ?? '';
+  return renderGiftAdmin(kv, cfg, session, now, { flash: Object.hasOwn(FLASH, msg) ? FLASH[msg] : undefined });
+}
+
+async function showGiftPreview(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
+  if (!(await adminSession(request, cfg, now))) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
+  const on = url.searchParams.get('on') ?? '';
+  const day = isValidDate(on) ? on : noteDay(now);
+  let gift: Gift | null;
+  let photos: EventPhoto[];
+  try {
+    gift = await loadGift(kv);
+    photos = await loadGiftPhotos(kv);
+  } catch (error) {
+    console.error(error);
+    return html(giftErrorPage(), 500);
+  }
+  if (!gift) return notFound();
+  const g = gift;
+  const state = (await tryLoad(() => loadGiftState(kv, g.id), 'gift state')) ?? emptyGiftState(g.id);
+  return html(giftPage({
+    view: readerGift(g, state, photos, day), home: `${cfg.base}/admin/gift/preview?on=${day}`,
+    mediaBase: `${cfg.base}/admin/media`, back: `${cfg.base}/admin/gift`, preview: true,
+  }));
+}
+
+async function giftAdminAction(
+  request: Request, env: Env, cfg: Config, now: Date, action: 'save' | 'photos' | 'photo-delete' | 'book' | 'unbook' | 'clear',
+): Promise<Response> {
+  const home = `${cfg.base}/admin/gift`;
+  const session = await adminSession(request, cfg, now);
+  if (!session) return redirect(`${cfg.base}/admin`);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  const kv = env.NOTES;
+  const again = (view: { text?: string; error?: string }, status = 400) => renderGiftAdmin(kv, cfg, session, now, view, status);
+  if (action === 'clear') {
+    const gift = await tryLoad(() => loadGift(kv), 'gift');
+    await kv.put(GIFT_STATE_KEY, JSON.stringify(emptyGiftState(gift?.id ?? '')));
+    return redirect(`${home}?msg=gift-cleared`);
+  }
+  if (action === 'book' || action === 'unbook') {
+    let gift: Gift | null;
+    let state: GiftState;
+    try {
+      gift = await loadGift(kv);
+      if (!gift) return notFound();
+      state = await loadGiftState(kv, gift.id);
+    } catch (error) {
+      console.error(error);
+      return again({ error: 'The gift or her side of it could not be read, so nothing was changed.' }, 500);
+    }
+    if (action === 'unbook') {
+      await kv.put(GIFT_STATE_KEY, JSON.stringify(undoBooked(state)));
+      return redirect(`${home}?msg=unbooked`);
+    }
+    const lines = parseBookingLines(field(form, 'lines'));
+    if ('error' in lines) return again({ error: lines.error });
+    const next = markBooked(state, field(form, 'day'), lines.lines, now.toISOString());
+    if (!next) return again({ error: 'Her pick has changed since this page was loaded, so nothing was booked. Look at her pick again.' });
+    await kv.put(GIFT_STATE_KEY, JSON.stringify(next));
+    return redirect(`${home}?msg=booked`);
+  }
+  // Throws on corrupt photos before anything is written.
+  const photos = await loadGiftPhotos(kv);
+  if (action === 'save') {
+    const text = field(form, 'gift');
+    const old = await tryLoad(() => loadGift(kv), 'gift');
+    const state = old ? await tryLoad(() => loadGiftState(kv, old.id), 'gift state') : null;
+    if (old && !state) return again({ text, error: 'Her side of the gift could not be read, so the gift was not saved. Clear her pick first.' });
+    const checked = checkGift(text, photos, state);
+    if (!checked.ok) return again({ text, error: checked.error });
+    await kv.put(GIFT_KEY, JSON.stringify(checked.gift));
+    return redirect(`${home}?msg=saved`);
+  }
+  const notes = await loadNotes(kv);
+  if (action === 'photo-delete') {
+    const photo = photos.find((p) => p.key === field(form, 'key'));
+    if (!photo) return redirect(`${home}?msg=photo-removed`);
+    const gift = await tryLoad(() => loadGift(kv), 'gift');
+    if (gift && giftPhotoNames(gift).includes(photo.name)) return again({ error: `"${photo.name}" is in use by the gift, so it stays.` });
+    await kv.put(GIFT_PHOTOS_KEY, JSON.stringify(photos.filter((p) => p.key !== photo.key)));
+    await retireOrphans(env, [photo.key], await keysInUse(kv, notes), now);
+    return redirect(`${home}?msg=photo-removed`);
+  }
+  const files = form.getAll('photos').filter((f): f is File => typeof f !== 'string' && f.size > 0);
+  if (files.length === 0) return again({ error: 'Choose at least one photo.' });
+  const checks = files.map((f) => checkFile('photo', f));
+  const failed = checks.find((c) => !c.ok);
+  if (failed && !failed.ok) return again({ error: failed.error });
+  let next = photos;
+  const replaced: string[] = [];
+  for (let i = 0; i < files.length; i++) {
+    const check = checks[i];
+    const stored = await storeUpload(env.MEDIA, 'photo', files[i], check.ok ? check.type : undefined, undefined);
+    if (!stored) continue;
+    const name = files[i].name.slice(0, 120);
+    replaced.push(...next.filter((p) => p.name === name).map((p) => p.key));
+    next = [...next.filter((p) => p.name !== name), { key: stored.key, name }];
+  }
+  await kv.put(GIFT_PHOTOS_KEY, JSON.stringify(next));
+  if (replaced.length) await retireOrphans(env, replaced, await keysInUse(kv, notes), now);
+  return redirect(`${home}?msg=photos-added`);
 }
 
 async function showEventAdmin(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
@@ -1324,6 +1544,16 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
       case 'POST /admin/event/photos': return await eventAdminAction(request, env, cfg, now, 'photos');
       case 'POST /admin/event/photos/delete': return await eventAdminAction(request, env, cfg, now, 'photo-delete');
       case 'POST /admin/event/clear': return await eventAdminAction(request, env, cfg, now, 'clear');
+      case 'GET /gift': return await showGift(request, kv, cfg, now);
+      case 'POST /gift/save': return await handleGiftSave(request, kv, cfg, now);
+      case 'GET /admin/gift': return await showGiftAdmin(request, kv, cfg, now, url);
+      case 'GET /admin/gift/preview': return await showGiftPreview(request, kv, cfg, now, url);
+      case 'POST /admin/gift/save': return await giftAdminAction(request, env, cfg, now, 'save');
+      case 'POST /admin/gift/photos': return await giftAdminAction(request, env, cfg, now, 'photos');
+      case 'POST /admin/gift/photos/delete': return await giftAdminAction(request, env, cfg, now, 'photo-delete');
+      case 'POST /admin/gift/book': return await giftAdminAction(request, env, cfg, now, 'book');
+      case 'POST /admin/gift/unbook': return await giftAdminAction(request, env, cfg, now, 'unbook');
+      case 'POST /admin/gift/clear': return await giftAdminAction(request, env, cfg, now, 'clear');
       case 'GET /reading-room': return await showReadingRoom(request, kv, cfg, now, url);
       case 'POST /reading-room/song-played': return await handleSongPlayed(request, kv, cfg, now);
       case 'POST /reading-room/album-seen': return await handleAlbumSeen(request, kv, cfg, now);

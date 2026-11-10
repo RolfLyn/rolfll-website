@@ -340,6 +340,9 @@ function noteText(text: string, cls: string): string {
     .join('\n');
 }
 
+// A wrapped box with a gold ribbon, for the way into a gift.
+const GIFT_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 13h22v15H5z" fill="#a24646"/><path d="M3 9h26v5H3z" fill="#8e3b3b"/><path d="M14 9h4v19h-4z" fill="#f2c879"/><path d="M16 9c-3-6-9-5-7-1 1 1 4 1 7 1zm0 0c3-6 9-5 7-1-1 1-4 1-7 1z" fill="none" stroke="#f2c879" stroke-width="1.6"/></svg>';
+
 // A little house with a lit door, for the way into a special event.
 const HOUSE_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 14 16 4l12 10" fill="#7c3d30"/><path d="M7 13h18v15H7z" fill="#f4e8d3" stroke="#4a3324" stroke-width="1.5"/><path d="M13 28v-7a3 3 0 0 1 6 0v7z" fill="#f2c879"/></svg>';
 
@@ -358,11 +361,12 @@ const UNREAD_SCRIPT = `<script>
 })();
 </script>`;
 
-export function readerPage({ current, archive, mediaBase, preview = false, sky = null, replies = null, reply, unsent, afterDark = null, reading = null, event = null }: {
+export function readerPage({ current, archive, mediaBase, preview = false, sky = null, replies = null, reply, unsent, afterDark = null, reading = null, event = null, gift = null }: {
   current: Note | null; archive: Note[]; mediaBase: string; preview?: boolean; sky?: Sky | null;
   replies?: Reply[] | null; reply?: ReplyForm; unsent?: string; afterDark?: { href: string; newest: string } | null;
   reading?: { href: string; unread: boolean } | null;
   event?: { href: string; title: string; waiting: boolean } | null;
+  gift?: { href: string; title: string; waiting: boolean } | null;
 }): string {
   const form = preview ? undefined : reply;
   const area = (n: Note) => (replies ? replyArea({ field: 'date', value: n.date, anchor: `note-${n.date}` }, replies.find((r) => r.date === n.date), form, unsent === n.date) : '');
@@ -403,11 +407,15 @@ ${UNREAD_SCRIPT}`
     ? `<a class="event-link${event.waiting ? ' waiting' : ''}" href="${escapeHtml(event.href)}">${HOUSE_ICON}<span><span class="event-title">${escapeHtml(event.title)}</span><span class="event-hint">${event.waiting ? 'A door is waiting for you' : 'Open the calendar'}</span></span></a>
 `
     : '';
+  const present = gift
+    ? `<a class="event-link gift-link${gift.waiting ? ' waiting' : ''}" href="${escapeHtml(gift.href)}">${GIFT_ICON}<span><span class="event-title">${escapeHtml(gift.title)}</span><span class="event-hint">${gift.waiting ? 'Something is waiting for you' : 'Open your gift'}</span></span></a>
+`
+    : '';
   const drawn = [current, ...archive].some((n) => n && hasDrawings(n.text));
   const equations = drawn ? `
 <style>${EQUATION_STYLE}</style>
 ${equationScript()}` : '';
-  return readerShell(top + way + today + room + door + past + game + replyScript + equations);
+  return readerShell(top + present + way + today + room + door + past + game + replyScript + equations);
 }
 
 export function errorPage(message: string): string {
@@ -498,7 +506,7 @@ export function adminPage(d: AdminPageData): string {
 
   return adminShell(`
 <h1>Notes</h1>
-<p><a href="${escapeHtml(`${d.base}/admin/after-dark`)}">After dark ☾</a> · <a href="${escapeHtml(`${d.base}/admin/reading-room`)}">Reading room</a> · <a href="${escapeHtml(`${d.base}/admin/event`)}">Special event</a></p>
+<p><a href="${escapeHtml(`${d.base}/admin/after-dark`)}">After dark ☾</a> · <a href="${escapeHtml(`${d.base}/admin/reading-room`)}">Reading room</a> · <a href="${escapeHtml(`${d.base}/admin/event`)}">Special event</a> · <a href="${escapeHtml(`${d.base}/admin/gift`)}">Gift</a></p>
 ${d.flash ? `<p class="flash">${escapeHtml(d.flash)}</p>` : ''}
 ${errorLine(d.error)}
 <h2>Showing today (${formatDate(d.today)})</h2>
