@@ -1,4 +1,6 @@
 import { todayInCopenhagen } from './dates';
+import { planDesk, plansAdmin } from './plans-views';
+import type { Plan, PlanRead } from './plans';
 import {
   escapeHtml, formatDate, formatStamp, listeningShell, adminShell, errorLine, replyArea, replyLine,
   REPLY_STYLE, type ReplyForm,
@@ -194,13 +196,17 @@ export interface Keepsakes {
   songPlayAction?: string; albumSeenAction?: string;
 }
 
-export function readingRoomPage({ books, played, replies, back, mediaBase, playAction, reply, open, unsent, preview, keepsakes }: {
+export function readingRoomPage({ books, played, replies, back, mediaBase, playAction, reply, open, unsent, preview, keepsakes, plans, planBase }: {
   books: Book[]; played: Played[]; replies: EntryReply[] | null; back: string; mediaBase: string;
   playAction?: string; reply?: ReplyForm; open?: string; unsent?: string;
   /** The preview's own address: nothing is recorded and replies are off. */
   preview?: string;
   /** The record player and album; null when they could not be read, so only they are missing. */
   keepsakes?: Keepsakes | null;
+  /** His documents for the desk; drafts are filtered out by the desk itself. */
+  plans?: { plans: Plan[]; read: PlanRead[] } | null;
+  /** Where a document opens: her page, or admin's preview. */
+  planBase?: string;
 }): string {
   const home = preview ?? `${back}/reading-room`;
   const form = preview ? undefined : reply;
@@ -230,6 +236,7 @@ ${keepsakes ? sideboard({
     albumSeenAction: preview ? undefined : keepsakes.albumSeenAction,
     csrf: preview ? undefined : reply?.csrf,
   }) : ''}
+${plans && planBase ? planDesk({ ...plans, home, open: open === 'plans', docBase: planBase }) : ''}
 ${sheets}${books.length ? `\n${ROOM_SCRIPT}` : ''}`);
 }
 
@@ -249,6 +256,7 @@ export interface ReadingRoomAdminData {
   error?: string;
   /** The songs and album sections; left out when they could not be read. */
   keepsakes?: Omit<Parameters<typeof keepsakesAdmin>[0], 'base' | 'csrf'>;
+  plans?: Omit<Parameters<typeof plansAdmin>[0], 'base' | 'csrf'>;
 }
 
 export function readingRoomAdminPage(d: ReadingRoomAdminData): string {
@@ -290,5 +298,6 @@ ${errorLine(d.error)}
 </form>
 <h2>The shelf</h2>
 <ul>${rows || '<li>No books yet.</li>'}</ul>
-${d.keepsakes ? keepsakesAdmin({ base: d.base, csrf: d.csrf, ...d.keepsakes }) : ''}`);
+${d.keepsakes ? keepsakesAdmin({ base: d.base, csrf: d.csrf, ...d.keepsakes }) : ''}
+${d.plans ? plansAdmin({ base: d.base, csrf: d.csrf, ...d.plans }) : ''}`);
 }

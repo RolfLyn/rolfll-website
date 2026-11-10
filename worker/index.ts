@@ -44,6 +44,11 @@ import {
   undoBooked, seeBooked, isGiftShowing, readerGift, giftWaiting, giftPhotoKeys, giftPhotoNames, type Gift, type GiftState,
 } from './gift';
 import { giftPage, giftErrorPage, giftAdminPage } from './gift-views';
+import {
+  parsePlans, parsePlansRead, upsertPlan, removePlan, movePlan, readyPlans, planStatus, plansWaiting, markPlanRead,
+  parsePlanForm, readPlanFile, PLAN_FILE_NEEDED, type Plan, type PlanDraft,
+} from './plans';
+import { planPage } from './plans-views';
 import type { Env, KV, R2 } from './types';
 
 const NOTES_KEY = 'notes';
@@ -72,6 +77,10 @@ const GIFT_KEY = 'gift';
 const GIFT_STATE_KEY = 'gift_state';
 const GIFT_PHOTOS_KEY = 'gift_photos';
 const GIFT_BOOKING_KEY = 'gift_booking';
+const PLANS_KEY = 'plans';
+const PLANS_READ_KEY = 'plans_read';
+const UUID_PART = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const PLAN_ROUTE = new RegExp(`^(/admin)?/reading-room/plans?/(${UUID_PART})$`);
 const FLASH: Record<string, string> = {
   'photos-added': 'Photos added.', 'photo-removed': 'Photo removed.', cleared: 'Her picks are cleared.',
   saved: 'Saved.', deleted: 'Deleted.', 'gift-cleared': 'Her side of the gift is cleared.', booked: 'Marked booked.', unbooked: 'Booking undone. She can pick a day again.', 'meeting-saved': 'Meeting saved.', 'meeting-removed': 'Meeting removed.',
@@ -172,6 +181,20 @@ async function loadBooks(kv: KV): Promise<Book[]> {
 
 async function loadSongs(kv: KV): Promise<Song[]> {
   return parseSongs(await kv.get(SONGS_KEY));
+}
+
+async function loadPlans(kv: KV): Promise<Plan[]> {
+  return parsePlans(await kv.get(PLANS_KEY));
+}
+
+async function loadPlansRead(kv: KV) {
+  return parsePlansRead(await kv.get(PLANS_READ_KEY));
+}
+
+/** Her documents for the desk, or null when they can't be read (the desk then stays away). */
+async function loadDesk(kv: KV) {
+  const plans = await tryLoad(() => loadPlans(kv), 'plans');
+  return plans ? { plans, read: (await tryLoad(() => loadPlansRead(kv), 'plan reads')) ?? [] } : null;
 }
 
 async function loadSongsPlayed(kv: KV) {
@@ -486,7 +509,9 @@ async function handleEventSave(request: Request, kv: KV, cfg: Config, now: Date)
 
 async function keepsakesWaiting(kv: KV, cfg: Config): Promise<boolean> {
   const k = await loadKeepsakes(kv, cfg);
-  return Boolean(k && (songsUnplayed(k.songs, k.songsPlayed).length || albumHasNew(k.album, k.albumSeen)));
+  if (k && (songsUnplayed(k.songs, k.songsPlayed).length || albumHasNew(k.album, k.albumSeen))) return true;
+  const desk = await loadDesk(kv);
+  return Boolean(desk && plansWaiting(desk.plans, desk.read));
 }
 
 async function showReader(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
@@ -603,7 +628,26 @@ async function showReadingRoom(request: Request, kv: KV, cfg: Config, now: Date,
     reply: { action: `${cfg.base}/reading-room/reply`, csrf: await csrfToken(session, cfg.secret) },
     open: url.searchParams.get('open') ?? undefined,
     unsent: url.searchParams.get('unsent') ?? undefined,
+    plans: await loadDesk(kv),
+    planBase: `${cfg.base}/reading-room/plans`,
   }));
+}
+
+async function showPlan(request: Request, kv: KV, cfg: Config, now: Date, id: string, asAdmin: boolean): Promise<Response> {
+  if (asAdmin) {
+    if (!(await adminSession(request, cfg, now))) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
+  } else if (!(await readerSession(request, cfg, now))) {
+    return html(readerLoginPage({ action: `${cfg.base}/login` }));
+  }
+  const plans = await tryLoad(() => loadPlans(kv), 'plans');
+  if (!plans) return html(readingRoomErrorPage(), 500);
+  const plan = (asAdmin ? plans : readyPlans(plans)).find((p) => p.id === id);
+  if (!plan) return notFound();
+  if (asAdmin) return html(planPage({ plan, back: `${cfg.base}/admin/reading-room#plans`, preview: true }));
+  // Opening it is what puts out its dot; nothing is written when she has already read this version.
+  const read = await tryLoad(() => loadPlansRead(kv), 'plan reads');
+  if (read && planStatus(plan, read) !== 'read') await kv.put(PLANS_READ_KEY, JSON.stringify(markPlanRead(read, plan, now.toISOString())));
+  return html(planPage({ plan, back: cfg.base }));
 }
 
 // Checks the reader's session and token and that the book exists; returns its id and form, or the response to send.
@@ -929,6 +973,9 @@ interface ReadingRoomView {
   editingSong?: Song;
   songDraft?: SongDraft;
   editingPhoto?: AlbumPhoto;
+  editingPlan?: Plan;
+  planDraft?: PlanDraft;
+  planError?: string;
   flash?: string;
   error?: string;
 }
@@ -940,7 +987,10 @@ async function renderReadingRoomAdmin(kv: KV, cfg: Config, session: string, view
   const songs = await tryLoad(() => loadSongs(kv), 'songs');
   const songsPlayed = await tryLoad(() => loadSongsPlayed(kv), 'song play times');
   const album = await tryLoad(() => loadAlbum(kv), 'album');
+  const plans = await tryLoad(() => loadPlans(kv), 'plans');
+  const plansRead = await tryLoad(() => loadPlansRead(kv), 'plan reads');
   const problems = [
+    plans ? '' : 'Our plans could not be read.',
     books ? '' : 'Books could not be read.', played ? '' : 'Play times could not be read.', replies ? '' : 'Replies could not be read.',
     songs ? '' : 'Songs could not be read.', songsPlayed ? '' : 'Song play times could not be read.', album ? '' : 'The album could not be read.',
   ];
@@ -959,6 +1009,10 @@ async function renderReadingRoomAdmin(kv: KV, cfg: Config, session: string, view
       songDraft: view.songDraft ?? (song ? { title: song.title, line: song.line } : EMPTY_SONG),
       editingSong: song, editingPhoto: view.editingPhoto,
     },
+    plans: {
+      plans: plans ?? [], read: plansRead ?? [], editing: view.editingPlan, error: view.planError,
+      draft: view.planDraft ?? (view.editingPlan ? { title: view.editingPlan.title, line: view.editingPlan.line, ready: view.editingPlan.ready } : { title: '', line: '', ready: false }),
+    },
     flash: view.flash,
     error: [view.error ?? '', ...problems].filter(Boolean).join(' ') || undefined,
   }), status);
@@ -973,8 +1027,10 @@ async function showReadingRoomAdmin(request: Request, kv: KV, cfg: Config, now: 
   const editingSong = songId ? (await tryLoad(() => loadSongs(kv), 'songs'))?.find((x) => x.id === songId) : undefined;
   const photoId = url.searchParams.get('photo');
   const editingPhoto = photoId ? (await tryLoad(() => loadAlbum(kv), 'album'))?.find((x) => x.id === photoId) : undefined;
+  const planId = url.searchParams.get('plan');
+  const editingPlan = planId ? (await tryLoad(() => loadPlans(kv), 'plans'))?.find((x) => x.id === planId) : undefined;
   const msg = url.searchParams.get('msg') ?? '';
-  return renderReadingRoomAdmin(kv, cfg, session, { editing, editingSong, editingPhoto, flash: Object.hasOwn(FLASH, msg) ? FLASH[msg] : undefined });
+  return renderReadingRoomAdmin(kv, cfg, session, { editing, editingSong, editingPhoto, editingPlan, flash: Object.hasOwn(FLASH, msg) ? FLASH[msg] : undefined });
 }
 
 async function showReadingRoomPreview(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
@@ -990,6 +1046,8 @@ async function showReadingRoomPreview(request: Request, kv: KV, cfg: Config, now
     open: url.searchParams.get('open') ?? undefined,
     preview: `${cfg.base}/admin/reading-room/preview`,
     keepsakes: await loadKeepsakes(kv, cfg),
+    plans: await loadDesk(kv),
+    planBase: `${cfg.base}/admin/reading-room/plan`,
   }));
 }
 
@@ -1297,6 +1355,46 @@ async function keepsakeAction(
   return redirect(`${home}?msg=saved#album`);
 }
 
+async function planAction(request: Request, kv: KV, cfg: Config, now: Date, action: 'save' | 'delete' | 'move'): Promise<Response> {
+  const home = `${cfg.base}/admin/reading-room`;
+  const session = await adminSession(request, cfg, now);
+  if (!session) return redirect(`${cfg.base}/admin`);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  // Throws on corrupt data, before anything is written.
+  const plans = await loadPlans(kv);
+  const id = field(form, 'id');
+  const existing = plans.find((p) => p.id === id);
+  if (action === 'move') {
+    const by = field(form, 'by');
+    if (existing && (by === '1' || by === '-1')) await kv.put(PLANS_KEY, JSON.stringify(movePlan(plans, id, by === '1' ? 1 : -1)));
+    return redirect(`${home}#plans`);
+  }
+  if (action === 'delete') {
+    if (!existing) return redirect(`${home}?msg=deleted#plans`);
+    await kv.put(PLANS_KEY, JSON.stringify(removePlan(plans, id)));
+    await updateStored(kv, PLANS_READ_KEY, parsePlansRead, (r) => r.filter((x) => x.id !== id));
+    return redirect(`${home}?msg=deleted#plans`);
+  }
+  if (id && !existing) return notFound();
+  const parsed = parsePlanForm((name) => field(form, name));
+  const upload = uploadedFile(form, 'file');
+  const file = upload ? await readPlanFile(upload) : null;
+  const errors = [parsed.error ?? '', file && !file.ok ? file.error : '', !upload && !existing ? PLAN_FILE_NEEDED : ''].filter(Boolean);
+  if (errors.length || (!file?.ok && !existing)) {
+    return renderReadingRoomAdmin(kv, cfg, session, { editingPlan: existing, planDraft: parsed.draft, planError: errors.join(' ') || PLAN_FILE_NEEDED }, 400);
+  }
+  const at = now.toISOString();
+  const plan: Plan = {
+    id: existing?.id ?? crypto.randomUUID(), ...parsed.draft,
+    created: existing?.created ?? at,
+    updated: file?.ok ? at : existing!.updated,
+    markdown: file?.ok ? file.markdown : existing!.markdown,
+  };
+  await kv.put(PLANS_KEY, JSON.stringify(upsertPlan(plans, plan)));
+  return redirect(`${home}?msg=saved#plans`);
+}
+
 async function readingRoomAction(
   request: Request, env: Env, cfg: Config, now: Date, action: 'save' | 'delete',
 ): Promise<Response> {
@@ -1514,6 +1612,8 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
   try {
     const method = request.method === 'HEAD' ? 'GET' : request.method;
     const sub = path.slice(base.length);
+    const planPath = PLAN_ROUTE.exec(sub);
+    if (planPath && method === 'GET' && (sub.includes('/plans/') !== Boolean(planPath[1]))) return await showPlan(request, kv, cfg, now, planPath[2], Boolean(planPath[1]));
     const media = MEDIA_ROUTE.exec(sub);
     if (media && method === 'GET') return await showMedia(request, env, cfg, now, media[2], media[1] === '/admin');
     switch (`${method} ${sub}`) {
@@ -1570,6 +1670,9 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
       case 'POST /reading-room/played': return await handlePlayed(request, kv, cfg, now);
       case 'POST /reading-room/reply': return await handleBookReply(request, kv, cfg, now);
       case 'GET /admin/reading-room': return await showReadingRoomAdmin(request, kv, cfg, now, url);
+      case 'POST /admin/reading-room/plan/save': return await planAction(request, kv, cfg, now, 'save');
+      case 'POST /admin/reading-room/plan/delete': return await planAction(request, kv, cfg, now, 'delete');
+      case 'POST /admin/reading-room/plan/move': return await planAction(request, kv, cfg, now, 'move');
       case 'GET /admin/reading-room/preview': return await showReadingRoomPreview(request, kv, cfg, now, url);
       case 'POST /admin/reading-room/save': return await readingRoomAction(request, env, cfg, now, 'save');
       case 'POST /admin/reading-room/delete': return await readingRoomAction(request, env, cfg, now, 'delete');
