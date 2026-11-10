@@ -1,4 +1,4 @@
-import { isValidDate } from './dates';
+import { Problem, isObject, text, id as checkId, date, list } from './json-checks';
 
 // A special event: a house of doors that open on their dates, with dishes to pick behind them,
 // and an optional card to pick a few things from. The event is written as JSON in admin.
@@ -42,35 +42,7 @@ export interface ReaderEvent {
 
 export const EMPTY_PICKS = (eventId: string): EventPicks => ({ event: eventId, opened: {}, doors: {}, card: [] });
 
-const ID = /^[a-z0-9][a-z0-9-]*$/i;
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-
-class Problem extends Error {}
-
-function text(v: unknown, max: number, where: string, optional = false): string | undefined {
-  if (v === undefined && optional) return undefined;
-  if (typeof v !== 'string' || v.trim() === '') throw new Problem(`${where} needs some text.`);
-  if (v.length > max) throw new Problem(`${where} is too long (at most ${max} characters).`);
-  return v;
-}
-
-function id(v: unknown, where: string): string {
-  if (typeof v !== 'string' || !ID.test(v) || v.length > EVENT_LIMITS.id) {
-    throw new Problem(`${where} needs an id of letters, numbers and dashes.`);
-  }
-  return v;
-}
-
-function date(v: unknown, where: string): string {
-  if (typeof v !== 'string' || !isValidDate(v)) throw new Problem(`${where} needs a real date written like 2026-01-31.`);
-  return v;
-}
-
-function list(v: unknown, max: number, where: string): unknown[] {
-  if (!Array.isArray(v)) throw new Problem(`${where} must be a list.`);
-  if (v.length > max) throw new Problem(`${where} has too many entries (at most ${max}).`);
-  return v;
-}
+const id = (v: unknown, where: string): string => checkId(v, where, EVENT_LIMITS.id);
 
 function dishes(v: unknown, where: string, names: Set<string>): EventDish[] {
   const seen = new Set<string>();
