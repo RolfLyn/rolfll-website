@@ -37,6 +37,7 @@ export function renderMarkdown(source: string, title: string, picks?: PickOption
   const items: PickItem[] = [];
   const used = new Map<string, number>();
   let forms = 0;
+  const keys = new Map<string, number>();
   // The title is already shown above the paper, so a first "# Title" that repeats it is left out.
   const first = source.match(/^\s*#[ \t]+(.+?)[ \t]*#*[ \t]*(?:\n|$)/);
   const kept = first && first[1].trim().toLowerCase() === title.trim().toLowerCase() ? source.slice(first[0].length) : source;
@@ -81,7 +82,11 @@ export function renderMarkdown(source: string, title: string, picks?: PickOption
           const strong = firstStrong(item.tokens);
           const inline = item.tokens.find((t) => (t as { tokens?: Token[] }).tokens) as { tokens: Token[] } | undefined;
           const name = (strong ? plain(strong.tokens) : plain(inline?.tokens ?? [])).slice(0, 120) || 'Untitled';
-          const key = name.toLowerCase();
+          // Two bullets with the same title stay apart: the second becomes "title#2".
+          const base = name.toLowerCase();
+          const n = (keys.get(base) ?? 0) + 1;
+          keys.set(base, n);
+          const key = n > 1 ? `${base}#${n}` : base;
           items.push({ key, title: name });
           return { key, body: this.parser.parse(item.tokens) };
         });

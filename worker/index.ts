@@ -1434,6 +1434,8 @@ async function planAction(request: Request, kv: KV, cfg: Config, now: Date, acti
     updated: file?.ok ? at : existing!.updated,
     markdown: file?.ok ? file.markdown : existing!.markdown,
   };
+  // Counted once here, so the admin page never has to read every document again.
+  plan.items = renderMarkdown(plan.markdown, plan.title).items;
   await kv.put(PLANS_KEY, JSON.stringify(upsertPlan(plans, plan)));
   return redirect(`${home}?msg=saved#plans`);
 }

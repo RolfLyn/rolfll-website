@@ -207,3 +207,11 @@ describe('her picks from "What I\'ll do"', () => {
     expect(preview).toContain('class="picks"');
   });
 });
+
+describe('items counted at upload', () => {
+  it('stores the "What I\'ll do" items with the document when he saves it', async () => {
+    const ctx = await desk();
+    await ctx.act('/save', { title: 'Guide', line: '', file: md("## What I'll do\n\n- **One** a\n- **Two** b") });
+    expect(JSON.parse(ctx.kv.data.get('plans')!)[0].items).toEqual([{ key: 'one', title: 'One' }, { key: 'two', title: 'Two' }]);
+  });
+});

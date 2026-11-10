@@ -17,6 +17,8 @@ export interface Plan {
   /** Changes only when a new file is uploaded. */
   updated: string;
   markdown: string;
+  /** The "What I'll do" items, counted when the file was saved. */
+  items?: { key: string; title: string }[];
 }
 
 export interface PlanRead { id: string; at: string; version: string }
@@ -30,7 +32,8 @@ function isPlan(v: unknown): v is Plan {
   return isRecord(v) && typeof v.id === 'string' && UUID.test(v.id) &&
     typeof v.title === 'string' && v.title.trim() !== '' && v.title.length <= PLAN_LIMITS.title &&
     typeof v.line === 'string' && v.line.length <= PLAN_LIMITS.line && typeof v.ready === 'boolean' &&
-    isTime(v.created) && isTime(v.updated) && typeof v.markdown === 'string';
+    isTime(v.created) && isTime(v.updated) && typeof v.markdown === 'string' &&
+    (v.items === undefined || (Array.isArray(v.items) && v.items.every((i) => isRecord(i) && typeof i.key === 'string' && typeof i.title === 'string')));
 }
 
 export function parsePlans(raw: string | null): Plan[] {
@@ -40,6 +43,7 @@ export function parsePlans(raw: string | null): Plan[] {
   if (new Set(data.map((p) => p.id)).size !== data.length) throw new Error('Stored plans repeat an id');
   return data.map((p) => ({
     id: p.id, title: p.title, line: p.line, ready: p.ready, created: p.created, updated: p.updated, markdown: p.markdown,
+    ...(p.items ? { items: p.items.map((i) => ({ key: i.key, title: i.title })) } : {}),
   }));
 }
 

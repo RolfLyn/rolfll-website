@@ -162,3 +162,10 @@ describe('"What I\'ll do" picks', () => {
     expect(dom(renderMarkdown(doc, 'T').html).querySelector('input')).toBeNull();
   });
 });
+
+describe('picks with the same title', () => {
+  it('keeps two bullets with the same bold title apart', () => {
+    const { items } = renderMarkdown("## What I'll do\n\n- **Call** the bank\n- **Call** the school\n- **Write**", 'T');
+    expect(items.map((i) => i.key)).toEqual(['call', 'call#2', 'write']);
+  });
+});

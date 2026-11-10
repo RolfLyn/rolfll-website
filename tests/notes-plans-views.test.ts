@@ -115,3 +115,22 @@ describe('admin', () => {
     expect(admin() + desk([plan(1)]) + planPage({ plan: plan(1), back: '/for-you' })).not.toContain('—');
   });
 });
+
+describe('her picks in admin', () => {
+  const doc = plan(1, { markdown: "## What I'll do\n\n- **A** x\n- **B** y", items: [{ key: 'a', title: 'A' }, { key: 'b', title: 'B' }] });
+  const admin = (picks: { key: string; title: string }[]) => plansAdmin({
+    base: '/for-you', csrf: 'tok', plans: [doc], read: [], draft: { title: '', line: '', ready: false },
+    picks: [{ planId: doc.id, picks, at: '2026-01-02T00:00:00.000Z', changed: false }],
+  });
+  it('counts only picks still in the document', () => {
+    const html = admin([{ key: 'a', title: 'A' }, { key: 'gone', title: 'Gone' }]);
+    expect(html).toContain('She&#39;d like 1 of 2');
+    expect(html).not.toContain('Gone');
+  });
+  it('uses the items counted at upload instead of reading the document again', () => {
+    const html = plansAdmin({
+      base: '/for-you', csrf: 'tok', plans: [{ ...doc, markdown: 'nothing here' }], read: [], draft: { title: '', line: '', ready: false }, picks: [],
+    });
+    expect(html).toContain("hasn't sent her picks yet");
+  });
+});

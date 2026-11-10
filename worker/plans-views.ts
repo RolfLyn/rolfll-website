@@ -217,13 +217,16 @@ export function plansAdmin(d: {
   picks?: PlanPicks[];
 }): string {
   const asked = (p: Plan) => {
-    const total = renderMarkdown(p.markdown, p.title).items.length;
+    // Documents saved before items were counted are read once here; saving again stores the count.
+    const items = p.items ?? renderMarkdown(p.markdown, p.title).items;
+    const total = items.length;
     if (!total) return '';
     const sent = d.picks?.find((x) => x.planId === p.id);
+    const still = sent ? sent.picks.filter((x) => items.some((i) => i.key === x.key)) : [];
     if (!sent) return '<p class="hint">What I\'ll do: she hasn\'t sent her picks yet.</p>';
     const when = new Date(sent.at).toISOString().slice(0, 10);
-    return `<p class="text"><strong>${escapeHtml(`She'd like ${sent.picks.length} of ${total}`)}</strong> <span class="hint">sent ${escapeHtml(when)}${sent.changed ? ', changed' : ''}</span></p>
-  ${sent.picks.length ? `<ul class="asked">${sent.picks.map((x) => `<li>${escapeHtml(x.title)}</li>`).join('')}</ul>` : ''}`;
+    return `<p class="text"><strong>${escapeHtml(`She'd like ${still.length} of ${total}`)}</strong> <span class="hint">sent ${escapeHtml(when)}${sent.changed ? ', changed' : ''}</span></p>
+  ${still.length ? `<ul class="asked">${still.map((x) => `<li>${escapeHtml(x.title)}</li>`).join('')}</ul>` : ''}`;
   };
   const csrf = `<input type="hidden" name="csrf" value="${escapeHtml(d.csrf)}">`;
   const at = (path: string) => escapeHtml(`${d.base}/admin/reading-room${path}`);
