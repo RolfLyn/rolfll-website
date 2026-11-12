@@ -136,6 +136,13 @@ describe('copy and script', () => {
     expect(HOME_SCRIPT).toContain("That didn't save. Try again?");
     expect(HOME_SCRIPT).not.toMatch(/=>|\blet |\bconst /);
   });
+  it('moves on from a deleted picture and falls back to the form otherwise', () => {
+    expect(HOME_SCRIPT).toContain('xhr.status === 404');
+    expect(HOME_SCRIPT).toContain('form.submit()');
+  });
+  it('wakes the Next button when the page is restored', () => {
+    expect(HOME_SCRIPT).toContain('pageshow');
+  });
 });
 
 describe('admin page', async () => {

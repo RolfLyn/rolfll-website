@@ -77,7 +77,7 @@ A small "Photo credits" link at the bottom of the results page lists each pictur
 `<base>/admin/home`, linked from the admin page beside "Gift".
 
 - **Banner on/off** switch.
-- **Pictures**, listed by group in their order: thumbnail, title, tags, credit, her score if any, with Edit (title, tags, credit, group), move up/down, and Delete (with a confirmation; deleting also drops her score for it).
+- **Pictures**, listed by group in their order: thumbnail, title, tags, credit, her score if any, with Edit (title, tags, credit, group), move up/down, and Delete (with a confirmation; her score for it is then ignored).
 - **Add pictures**: upload one or several images with a group, and for each a title, tags (comma-separated) and credit. Same photo checks as gift and album photos.
 - **Her results**: the same three sections as her results page, plus a full table of every scored picture with score and when she scored it.
 - **Clear her scores** with a confirmation, for test runs.
@@ -85,7 +85,7 @@ A small "Photo credits" link at the bottom of the results page lists each pictur
 ## Data
 
 - KV `home` holds `{ on: boolean, pictures: Picture[] }`, where `Picture` is `{ id, group: 'houses'|'rooms'|'gardens'|'furniture', title, tags: string[], credit, file, added }`. `id` is a uuid. Order within a group is the array order.
-- KV `home_scores` holds her side only: `{ [pictureId]: { score: 1..10, at: ISO time } }`. Only her saves write it; admin writes it only for "Clear her scores" and when deleting a picture. Kept apart from `home` so his edits and her saves never overwrite each other.
+- KV `home_scores` holds her side only: `{ [pictureId]: { score: 1..10, at: ISO time } }`. Only her saves write it; admin writes it only for "Clear her scores". Deleting a picture leaves her score in place, where it is ignored, so a stale read can never drop scores she just saved. Kept apart from `home` so his edits and her saves never overwrite each other.
 - KV `home_progress` holds `{ finishedAt?: ISO time }`, her side, written by her saves and cleared by "Clear her scores".
 - Image files in R2 with the same flat `<uuid>.<ext>` keys as every other upload (the builder's call, so the existing upload code is reused), served behind her session as gift photos are, and counted in `keysInUse` so media cleanup never deletes them.
 - Add all three keys to the scratchpad backup script.

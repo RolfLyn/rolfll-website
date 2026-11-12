@@ -168,6 +168,14 @@ describe('when something is corrupt', () => {
     expect(page.status).toBe(200);
     expect(await page.text()).toContain('The saved pictures could not be read');
   });
+  it('names a corrupt progress marker in admin', async () => {
+    const { env, kv } = setup();
+    kv.data.set('home_progress', '{"finishedAt":"x"}');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const admin = await login(env, 'admin');
+    const page = await (await handleRequest(get('/for-you/admin/home', admin), env, NOW)).text();
+    expect(page).toContain('Her progress marker could not be read');
+  });
   it('writes nothing when her scores cannot be read', async () => {
     const { env, kv } = setup();
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -231,7 +239,10 @@ describe('admin', () => {
     const res = await handleRequest(post('/for-you/admin/home/delete', { csrf, id: 'p1' }, admin), env, NOW);
     expect(res.headers.get('Location')).toBe('/for-you/admin/home?msg=home-deleted');
     expect(homeOf(kv).pictures.map((p) => p.id)).toEqual(['p2', 'p3']);
-    expect(scores(kv)).toEqual({});
+    // Her scores are hers: a delete never rewrites them, the stale one is just ignored.
+    expect(kv.puts.filter((x) => x.key === 'home_scores')).toHaveLength(1);
+    const page = await (await handleRequest(get('/for-you/admin/home', admin), env, NOW)).text();
+    expect(page).toContain('She has not scored anything yet.');
     const trash = JSON.parse(kv.data.get('trash') ?? '[]').map((t: { key: string }) => t.key);
     expect(trash).toContain(fileOf(1));
   });

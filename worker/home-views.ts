@@ -79,6 +79,8 @@ export const HOME_SCRIPT = `(function () {
     var show = function () { num.textContent = range.value; word.textContent = words[range.value - 1]; };
     range.addEventListener('input', show);
     range.addEventListener('change', show);
+    // A page restored by a back swipe keeps its disabled button; wake it.
+    window.addEventListener('pageshow', function () { button.disabled = false; oops.textContent = ''; });
     var nextFile = form.getAttribute('data-next-file');
     if (nextFile) { var pre = new Image(); pre.src = nextFile; }
     form.addEventListener('submit', function (e) {
@@ -93,9 +95,10 @@ export const HOME_SCRIPT = `(function () {
       xhr.open('POST', form.action);
       xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
       xhr.onload = function () {
-        if (xhr.status === 204) { location.href = form.getAttribute('data-next'); return; }
-        button.disabled = false;
-        oops.textContent = "That didn't save. Try again?";
+        // Saved, or the picture was removed meanwhile: either way, on to the next one.
+        if (xhr.status === 204 || xhr.status === 404) { location.href = form.getAttribute('data-next'); return; }
+        // Anything else (an expired login, an old form): send it the ordinary way, so the server can say what is needed.
+        form.submit();
       };
       xhr.onerror = function () { button.disabled = false; oops.textContent = "That didn't save. Try again?"; };
       xhr.send(data);

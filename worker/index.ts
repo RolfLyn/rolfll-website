@@ -46,7 +46,7 @@ import {
 import { giftPage, giftErrorPage, giftAdminPage } from './gift-views';
 import {
   GROUPS, parseHome, parseHomeScores, parseHomeProgress, parsePictureFields, parseScore, saveScore, inGroup, groupCounts,
-  firstUnscored, bannerHint, homeResults, addPicture, editPicture, movePicture, removePicture, dropScore, setOn, HOME_LIMITS,
+  firstUnscored, bannerHint, homeResults, addPicture, editPicture, movePicture, removePicture, setOn, HOME_LIMITS,
   type Home, type HomeGroup, type HomeScores, type HomeProgress,
 } from './home';
 import { homeStartPage, homeScorePage, homeDonePage, homeLovePage, homeCreditsPage, homeErrorPage, homeAdminPage } from './home-views';
@@ -1791,9 +1791,12 @@ async function renderHomeAdmin(
 ): Promise<Response> {
   const home = await tryLoad(() => loadHome(kv), 'home');
   const scores = await tryLoad(async () => parseHomeScores(await kv.get(HOME_SCORES_KEY)), 'home scores');
+  const progress = await tryLoad(async () => parseHomeProgress(await kv.get(HOME_PROGRESS_KEY)), 'home progress');
   return html(homeAdminPage({
     base: cfg.base, csrf: await csrfToken(session, cfg.secret), home, scores, ...view,
-    problem: home ? undefined : 'The saved pictures could not be read. Nothing can be changed here until that is fixed.',
+    problem: !home
+      ? 'The saved pictures could not be read. Nothing can be changed here until that is fixed.'
+      : !progress ? 'Her progress marker could not be read, so the banner and her pages are hidden from her until it is fixed.' : undefined,
   }), status);
 }
 
@@ -1868,10 +1871,9 @@ async function homeAdminAction(
   }
   const picture = home.pictures.find((p) => p.id === id);
   if (!picture) return redirect(`${back}?msg=home-deleted`);
-  const scores = await tryLoad(async () => parseHomeScores(await kv.get(HOME_SCORES_KEY)), 'home scores');
-  if (!scores) return again('Her scores could not be read, so nothing was changed.', 500);
+  // Her scores are never rewritten here: a stale read could drop scores she just saved. Her score for this
+  // picture stays in her key and is ignored everywhere, because the picture is gone.
   await kv.put(HOME_KEY, JSON.stringify(removePicture(home, id)));
-  if (Object.hasOwn(scores, id)) await kv.put(HOME_SCORES_KEY, JSON.stringify(dropScore(scores, id)));
   await retireOrphans(env, [picture.file], await keysInUse(kv, await loadNotes(kv)), now);
   return redirect(`${back}?msg=home-deleted`);
 }
