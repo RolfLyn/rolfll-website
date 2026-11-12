@@ -341,6 +341,7 @@ function noteText(text: string, cls: string): string {
 }
 
 // A wrapped box with a gold ribbon, for the way into a gift.
+const HOME_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M3 15 16 4l13 11" fill="none" stroke="#f2c879" stroke-width="2" stroke-linejoin="round"/><path d="M7 13v15h18V13" fill="#f4e8d3" stroke="#4a3324" stroke-width="1.5"/><path d="M16 25s-5-3.2-5-6.4a2.6 2.6 0 0 1 5-1 2.6 2.6 0 0 1 5 1c0 3.2-5 6.4-5 6.4z" fill="#b0645a"/></svg>';
 const GIFT_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 13h22v15H5z" fill="#a24646"/><path d="M3 9h26v5H3z" fill="#8e3b3b"/><path d="M14 9h4v19h-4z" fill="#f2c879"/><path d="M16 9c-3-6-9-5-7-1 1 1 4 1 7 1zm0 0c3-6 9-5 7-1-1 1-4 1-7 1z" fill="none" stroke="#f2c879" stroke-width="1.6"/></svg>';
 
 // A little house with a lit door, for the way into a special event.
@@ -361,12 +362,13 @@ const UNREAD_SCRIPT = `<script>
 })();
 </script>`;
 
-export function readerPage({ current, archive, mediaBase, preview = false, sky = null, replies = null, reply, unsent, afterDark = null, reading = null, event = null, gift = null }: {
+export function readerPage({ current, archive, mediaBase, preview = false, sky = null, replies = null, reply, unsent, afterDark = null, reading = null, event = null, gift = null, home = null }: {
   current: Note | null; archive: Note[]; mediaBase: string; preview?: boolean; sky?: Sky | null;
   replies?: Reply[] | null; reply?: ReplyForm; unsent?: string; afterDark?: { href: string; newest: string } | null;
   reading?: { href: string; unread: boolean } | null;
   event?: { href: string; title: string; waiting: boolean } | null;
   gift?: { href: string; title: string; waiting: boolean } | null;
+  home?: { href: string; title: string; hint: string; waiting: boolean } | null;
 }): string {
   const form = preview ? undefined : reply;
   const area = (n: Note) => (replies ? replyArea({ field: 'date', value: n.date, anchor: `note-${n.date}` }, replies.find((r) => r.date === n.date), form, unsent === n.date) : '');
@@ -411,11 +413,15 @@ ${UNREAD_SCRIPT}`
     ? `<a class="event-link gift-link${gift.waiting ? ' waiting' : ''}" href="${escapeHtml(gift.href)}">${GIFT_ICON}<span><span class="event-title">${escapeHtml(gift.title)}</span><span class="event-hint">${gift.waiting ? 'Something is waiting for you' : 'Open your gift'}</span></span></a>
 `
     : '';
+  const dream = home
+    ? `<a class="event-link home-link${home.waiting ? ' waiting' : ''}" href="${escapeHtml(home.href)}">${HOME_ICON}<span><span class="event-title">${escapeHtml(home.title)}</span><span class="event-hint">${escapeHtml(home.hint)}</span></span></a>
+`
+    : '';
   const drawn = [current, ...archive].some((n) => n && hasDrawings(n.text));
   const equations = drawn ? `
 <style>${EQUATION_STYLE}</style>
 ${equationScript()}` : '';
-  return readerShell(top + present + way + today + room + door + past + game + replyScript + equations);
+  return readerShell(top + present + dream + way + today + room + door + past + game + replyScript + equations);
 }
 
 export function errorPage(message: string): string {
@@ -508,7 +514,7 @@ export function adminPage(d: AdminPageData): string {
 
   return adminShell(`
 <h1>Notes</h1>
-<p><a href="${escapeHtml(`${d.base}/admin/after-dark`)}">After dark ☾</a> · <a href="${escapeHtml(`${d.base}/admin/reading-room`)}">Reading room${d.roomNew ? ' <span class="dot" title="Her picks are in">&#9679;</span>' : ''}</a> · <a href="${escapeHtml(`${d.base}/admin/event`)}">Special event</a> · <a href="${escapeHtml(`${d.base}/admin/gift`)}">Gift</a></p>
+<p><a href="${escapeHtml(`${d.base}/admin/after-dark`)}">After dark ☾</a> · <a href="${escapeHtml(`${d.base}/admin/reading-room`)}">Reading room${d.roomNew ? ' <span class="dot" title="Her picks are in">&#9679;</span>' : ''}</a> · <a href="${escapeHtml(`${d.base}/admin/event`)}">Special event</a> · <a href="${escapeHtml(`${d.base}/admin/gift`)}">Gift</a> · <a href="${escapeHtml(`${d.base}/admin/home`)}">Our future home</a></p>
 ${d.flash ? `<p class="flash">${escapeHtml(d.flash)}</p>` : ''}
 ${errorLine(d.error)}
 <h2>Showing today (${formatDate(d.today)})</h2>

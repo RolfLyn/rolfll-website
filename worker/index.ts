@@ -45,6 +45,12 @@ import {
 } from './gift';
 import { giftPage, giftErrorPage, giftAdminPage } from './gift-views';
 import {
+  GROUPS, parseHome, parseHomeScores, parseHomeProgress, parsePictureFields, parseScore, saveScore, inGroup, groupCounts,
+  firstUnscored, bannerHint, homeResults, addPicture, editPicture, movePicture, removePicture, dropScore, setOn, HOME_LIMITS,
+  type Home, type HomeGroup, type HomeScores, type HomeProgress,
+} from './home';
+import { homeStartPage, homeScorePage, homeDonePage, homeLovePage, homeCreditsPage, homeErrorPage, homeAdminPage } from './home-views';
+import {
   parsePlans, parsePlansRead, upsertPlan, removePlan, movePlan, readyPlans, planStatus, plansWaiting, markPlanRead,
   parsePlanForm, readPlanFile, PLAN_FILE_NEEDED, parsePlanPicks, sendPicks, picksNew, type Plan, type PlanDraft,
 } from './plans';
@@ -82,12 +88,18 @@ const PLANS_KEY = 'plans';
 const PLANS_READ_KEY = 'plans_read';
 const PLAN_PICKS_KEY = 'plan_picks';
 const PLAN_PICKS_SEEN_KEY = 'plan_picks_seen';
+const HOME_KEY = 'home';
+const HOME_SCORES_KEY = 'home_scores';
+const HOME_PROGRESS_KEY = 'home_progress';
+const HOME_GROUP_ROUTE = /^\/home\/(houses|rooms|gardens|furniture)$/;
 const UUID_PART = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const PLAN_ROUTE = new RegExp(`^(/admin)?/reading-room/plans?/(${UUID_PART})$`);
 const PICKS_ROUTE = new RegExp(`^/reading-room/plans/(${UUID_PART})/picks$`);
 const FLASH: Record<string, string> = {
   'photos-added': 'Photos added.', 'photo-removed': 'Photo removed.', cleared: 'Her picks are cleared.',
   saved: 'Saved.', deleted: 'Deleted.', 'gift-cleared': 'Her side of the gift is cleared.', booked: 'Marked booked.', unbooked: 'Booking undone. She can pick a day again.', 'meeting-saved': 'Meeting saved.', 'meeting-removed': 'Meeting removed.',
+  'home-on': 'The banner is on.', 'home-off': 'The banner is off.', 'home-added': 'Pictures added.', 'home-saved': 'Saved.',
+  'home-deleted': 'Picture deleted.', 'home-cleared': 'Her scores are cleared.',
 };
 const EXPIRED = 'That form expired. Go back, reload, and try again.';
 const INVALID = `Needs a real date and a message of at most ${MAX_LENGTH} characters.`;
@@ -340,7 +352,8 @@ async function keysInUse(kv: KV, notes: Note[], entries?: Entry[], books?: Book[
   const songs = (await tryLoad(() => loadSongs(kv), 'songs')) ?? [];
   const album = (await tryLoad(() => loadAlbum(kv), 'album')) ?? [];
   const giftPhotos = (await tryLoad(() => loadGiftPhotos(kv), 'gift photos')) ?? [];
-  return [...giftPhotos.map((p) => p.key),
+  const home = await tryLoad(() => loadHome(kv), 'home');
+  return [...giftPhotos.map((p) => p.key), ...(home?.pictures.map((p) => p.file) ?? []),
     ...notes.flatMap(attachmentKeys), ...entryKeys(others), ...bookKeys(shelf), ...photos.map((p) => p.key),
     ...songKeys(songs), ...albumKeys(album),
   ];
@@ -531,6 +544,7 @@ async function showReader(request: Request, kv: KV, cfg: Config, now: Date, url:
   return html(readerPage({
     event: await eventWayIn(kv, cfg, today),
     gift: await giftWayIn(kv, cfg, day),
+    home: await homeWayIn(kv, cfg),
     reading: {
       href: `${cfg.base}/reading-room`,
       unread: Boolean(books && played && books.some((b) => !played.some((p) => p.id === b.id))) || await keepsakesWaiting(kv, cfg),
@@ -841,6 +855,11 @@ async function showMedia(
       const gift = await tryLoad(() => loadGift(env.NOTES), 'gift');
       if (!gift || !isGiftShowing(gift, today) || !giftPhotoKeys(gift, giftPhotos).includes(key)) return notFound();
     }
+    return (await serveMedia(env.MEDIA, key, request, 'no-store')) ?? notFound();
+  }
+  const homeData = await tryLoad(() => loadHome(env.NOTES), 'home');
+  if (homeData?.pictures.some((p) => p.file === key)) {
+    if (!asAdmin && !homeData.on) return notFound();
     return (await serveMedia(env.MEDIA, key, request, 'no-store')) ?? notFound();
   }
   const entry = (await tryLoad(() => loadEntries(env.NOTES), 'after dark'))?.find((e) => e.audio?.key === key);
@@ -1639,6 +1658,224 @@ async function meetingAction(
   return redirect(`${adminHome}?msg=meeting-saved`);
 }
 
+// "Our future home": she scores pictures; he manages them in admin.
+
+async function loadHome(kv: KV): Promise<Home> {
+  return parseHome(await kv.get(HOME_KEY));
+}
+
+interface HomeView { home: Home; scores: HomeScores; progress: HomeProgress }
+
+async function loadHomeView(kv: KV): Promise<HomeView> {
+  return {
+    home: await loadHome(kv),
+    scores: parseHomeScores(await kv.get(HOME_SCORES_KEY)),
+    progress: parseHomeProgress(await kv.get(HOME_PROGRESS_KEY)),
+  };
+}
+
+async function homeWayIn(kv: KV, cfg: Config): Promise<{ href: string; title: string; hint: string; waiting: boolean } | null> {
+  const view = await tryLoad(() => loadHomeView(kv), 'home');
+  if (!view || !view.home.on) return null;
+  const hint = bannerHint(view.home, view.scores, view.progress);
+  return hint ? { href: `${cfg.base}/home`, title: 'Our future home', hint: hint.text, waiting: hint.waiting } : null;
+}
+
+/** Her session and the pictures, or the response to send instead (login, 404 while the banner is off, error page). */
+async function homeForHer(request: Request, kv: KV, cfg: Config, now: Date): Promise<{ session: string; view: HomeView } | Response> {
+  const session = await readerSession(request, cfg, now);
+  if (!session) return html(readerLoginPage({ action: `${cfg.base}/login` }));
+  let view: HomeView;
+  try {
+    view = await loadHomeView(kv);
+  } catch (error) {
+    console.error('Could not read home', error);
+    return html(homeErrorPage(), 500);
+  }
+  if (!view.home.on || view.home.pictures.length === 0) return notFound();
+  return { session, view };
+}
+
+const homeAt = (cfg: Config, group: HomeGroup, id: string) => `${cfg.base}/home/${group}?at=${encodeURIComponent(id)}`;
+
+/** Where Next goes from a picture: the next one in its group, or the group's done screen after the last. */
+function homeNext(cfg: Config, home: Home, group: HomeGroup, id: string): { href: string; file?: string } {
+  const list = inGroup(home, group);
+  const after = list[list.findIndex((p) => p.id === id) + 1];
+  return after ? { href: homeAt(cfg, group, after.id), file: after.file } : { href: `${cfg.base}/home/${group}?done=1` };
+}
+
+async function showHomeStart(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
+  const got = await homeForHer(request, kv, cfg, now);
+  if (got instanceof Response) return got;
+  const { home, scores } = got.view;
+  const counts = groupCounts(home, scores);
+  return html(homeStartPage({
+    groups: GROUPS.map((g) => ({ ...g, ...counts[g.id], coverKey: inGroup(home, g.id)[0]?.file, href: `${cfg.base}/home/${g.id}` })),
+    loveHref: home.pictures.some((p) => Object.hasOwn(scores, p.id)) ? `${cfg.base}/home/love` : undefined,
+    mediaBase: `${cfg.base}/media`, back: cfg.base,
+  }));
+}
+
+async function showHomeGroup(request: Request, kv: KV, cfg: Config, now: Date, url: URL, group: HomeGroup): Promise<Response> {
+  const got = await homeForHer(request, kv, cfg, now);
+  if (got instanceof Response) return got;
+  const { home, scores } = got.view;
+  const list = inGroup(home, group);
+  if (list.length === 0) return notFound();
+  const name = GROUPS.find((g) => g.id === group)!.name;
+  if (url.searchParams.get('done') === '1') {
+    const i = GROUPS.findIndex((g) => g.id === group);
+    const next = [...GROUPS.slice(i + 1), ...GROUPS.slice(0, i)].find((g) => firstUnscored(home, scores, g.id));
+    return html(homeDonePage({
+      groupName: name, next: next && { name: next.name, href: `${cfg.base}/home/${next.id}` },
+      loveHref: `${cfg.base}/home/love`, home: `${cfg.base}/home`,
+    }));
+  }
+  const at = url.searchParams.get('at');
+  const picture = at !== null ? list.find((p) => p.id === at) : firstUnscored(home, scores, group) ?? list[0];
+  if (!picture) return notFound();
+  const index = list.indexOf(picture);
+  const next = homeNext(cfg, home, group, picture.id);
+  return html(homeScorePage({
+    groupName: name, picture, index: index + 1, total: list.length,
+    score: Object.hasOwn(scores, picture.id) ? scores[picture.id].score : undefined,
+    action: `${cfg.base}/home/score`, csrf: await csrfToken(got.session, cfg.secret), group,
+    nextHref: next.href, nextFile: next.file, backHref: index > 0 ? homeAt(cfg, group, list[index - 1].id) : undefined,
+    mediaBase: `${cfg.base}/media`, home: `${cfg.base}/home`,
+  }));
+}
+
+async function handleHomeScore(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
+  const session = await readerSession(request, cfg, now);
+  if (!session) return redirect(cfg.base);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  const got = await homeForHer(request, kv, cfg, now);
+  if (got instanceof Response) return got;
+  const { home, scores, progress } = got.view;
+  const value = parseScore(field(form, 'score'));
+  if (value === null) return html(errorPage('A score is a whole number from 1 to 10.'), 400);
+  const id = field(form, 'id');
+  const saved = saveScore(home, scores, progress, id, value, now.toISOString());
+  if (!saved) return notFound();
+  await kv.put(HOME_SCORES_KEY, JSON.stringify(saved.scores));
+  if (saved.progress.finishedAt !== progress.finishedAt) await kv.put(HOME_PROGRESS_KEY, JSON.stringify(saved.progress));
+  if (field(form, 'quiet') === '1') return quietDone();
+  const picture = home.pictures.find((p) => p.id === id)!;
+  return redirect(homeNext(cfg, home, picture.group, id).href);
+}
+
+async function showHomeLove(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
+  const got = await homeForHer(request, kv, cfg, now);
+  if (got instanceof Response) return got;
+  return html(homeLovePage({
+    results: homeResults(got.view.home, got.view.scores), mediaBase: `${cfg.base}/media`,
+    creditsHref: `${cfg.base}/home/credits`, home: `${cfg.base}/home`,
+  }));
+}
+
+async function showHomeCredits(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
+  const got = await homeForHer(request, kv, cfg, now);
+  if (got instanceof Response) return got;
+  return html(homeCreditsPage({
+    credits: got.view.home.pictures.filter((p) => p.credit).map((p) => ({ title: p.title, credit: p.credit })),
+    back: `${cfg.base}/home/love`,
+  }));
+}
+
+const HOME_UNREADABLE = 'The saved pictures could not be read, so nothing was changed.';
+
+async function renderHomeAdmin(
+  kv: KV, cfg: Config, session: string, view: { flash?: string; error?: string }, status = 200,
+): Promise<Response> {
+  const home = await tryLoad(() => loadHome(kv), 'home');
+  const scores = await tryLoad(async () => parseHomeScores(await kv.get(HOME_SCORES_KEY)), 'home scores');
+  return html(homeAdminPage({
+    base: cfg.base, csrf: await csrfToken(session, cfg.secret), home, scores, ...view,
+    problem: home ? undefined : 'The saved pictures could not be read. Nothing can be changed here until that is fixed.',
+  }), status);
+}
+
+async function showHomeAdmin(request: Request, kv: KV, cfg: Config, now: Date, url: URL): Promise<Response> {
+  const session = await adminSession(request, cfg, now);
+  if (!session) return html(adminLoginPage({ action: `${cfg.base}/admin/login` }));
+  const msg = url.searchParams.get('msg') ?? '';
+  return renderHomeAdmin(kv, cfg, session, { flash: Object.hasOwn(FLASH, msg) ? FLASH[msg] : undefined });
+}
+
+async function homeAdminAction(
+  request: Request, env: Env, cfg: Config, now: Date, action: 'toggle' | 'add' | 'edit' | 'move' | 'delete' | 'clear',
+): Promise<Response> {
+  const back = `${cfg.base}/admin/home`;
+  const session = await adminSession(request, cfg, now);
+  if (!session) return redirect(`${cfg.base}/admin`);
+  const form = await readForm(request);
+  if (!(await verifyCsrf(field(form, 'csrf'), session, cfg.secret))) return html(errorPage(EXPIRED), 403);
+  const kv = env.NOTES;
+  const again = (error: string, status = 400) => renderHomeAdmin(kv, cfg, session, { error }, status);
+  if (action === 'clear') {
+    await kv.put(HOME_SCORES_KEY, '{}');
+    await kv.put(HOME_PROGRESS_KEY, '{}');
+    return redirect(`${back}?msg=home-cleared`);
+  }
+  let home: Home;
+  try {
+    home = await loadHome(kv);
+  } catch (error) {
+    console.error('Could not read home', error);
+    return again(HOME_UNREADABLE, 500);
+  }
+  const fields = () => parsePictureFields({
+    group: field(form, 'group'), title: field(form, 'title'), tags: field(form, 'tags'), credit: field(form, 'credit'),
+  });
+  const id = field(form, 'id');
+  if (action === 'toggle') {
+    const on = field(form, 'on') === '1';
+    await kv.put(HOME_KEY, JSON.stringify(setOn(home, on)));
+    return redirect(`${back}?msg=${on ? 'home-on' : 'home-off'}`);
+  }
+  if (action === 'add') {
+    const files = form.getAll('photos').filter((f): f is File => typeof f !== 'string' && f.size > 0);
+    if (files.length === 0) return again('Choose at least one photo.');
+    const checked = fields();
+    if (!checked.ok) return again(checked.error);
+    if (home.pictures.length + files.length > HOME_LIMITS.pictures) return again(`There can be up to ${HOME_LIMITS.pictures} pictures.`);
+    const checks = files.map((f) => checkFile('photo', f));
+    const failed = checks.find((c) => !c.ok);
+    if (failed && !failed.ok) return again(failed.error);
+    let next = home;
+    for (let i = 0; i < files.length; i++) {
+      const check = checks[i];
+      const stored = await storeUpload(env.MEDIA, 'photo', files[i], check.ok ? check.type : undefined, undefined);
+      if (!stored) continue;
+      next = addPicture(next, { id: crypto.randomUUID(), ...checked.value, file: stored.key, added: now.toISOString() }) ?? next;
+    }
+    await kv.put(HOME_KEY, JSON.stringify(next));
+    return redirect(`${back}?msg=home-added`);
+  }
+  if (action === 'edit') {
+    const checked = fields();
+    if (!checked.ok) return again(checked.error);
+    const next = editPicture(home, id, checked.value);
+    if (!next) return notFound();
+    await kv.put(HOME_KEY, JSON.stringify(next));
+    return redirect(`${back}?msg=home-saved`);
+  }
+  if (action === 'move') {
+    await kv.put(HOME_KEY, JSON.stringify(movePicture(home, id, field(form, 'dir') === 'up' ? 'up' : 'down')));
+    return redirect(`${back}?msg=home-saved`);
+  }
+  const picture = home.pictures.find((p) => p.id === id);
+  if (!picture) return redirect(`${back}?msg=home-deleted`);
+  const scores = await tryLoad(async () => parseHomeScores(await kv.get(HOME_SCORES_KEY)), 'home scores');
+  if (!scores) return again('Her scores could not be read, so nothing was changed.', 500);
+  await kv.put(HOME_KEY, JSON.stringify(removePicture(home, id)));
+  if (Object.hasOwn(scores, id)) await kv.put(HOME_SCORES_KEY, JSON.stringify(dropScore(scores, id)));
+  await retireOrphans(env, [picture.file], await keysInUse(kv, await loadNotes(kv)), now);
+  return redirect(`${back}?msg=home-deleted`);
+}
+
 export async function handleRequest(request: Request, env: Env, now: Date): Promise<Response> {
   const base = normalizeBase(env.NOTES_PATH);
   const url = new URL(request.url);
@@ -1661,6 +1898,8 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
     if (picksPath && method === 'POST') return await handlePlanPicks(request, kv, cfg, now, picksPath[1]);
     const planPath = PLAN_ROUTE.exec(sub);
     if (planPath && method === 'GET' && (sub.includes('/plans/') !== Boolean(planPath[1]))) return await showPlan(request, kv, cfg, now, planPath[2], Boolean(planPath[1]));
+    const homeGroup = HOME_GROUP_ROUTE.exec(sub);
+    if (homeGroup && method === 'GET') return await showHomeGroup(request, kv, cfg, now, url, homeGroup[1] as HomeGroup);
     const media = MEDIA_ROUTE.exec(sub);
     if (media && method === 'GET') return await showMedia(request, env, cfg, now, media[2], media[1] === '/admin');
     switch (`${method} ${sub}`) {
@@ -1723,6 +1962,17 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
       case 'GET /admin/reading-room/preview': return await showReadingRoomPreview(request, kv, cfg, now, url);
       case 'POST /admin/reading-room/save': return await readingRoomAction(request, env, cfg, now, 'save');
       case 'POST /admin/reading-room/delete': return await readingRoomAction(request, env, cfg, now, 'delete');
+      case 'GET /home': return await showHomeStart(request, kv, cfg, now);
+      case 'POST /home/score': return await handleHomeScore(request, kv, cfg, now);
+      case 'GET /home/love': return await showHomeLove(request, kv, cfg, now);
+      case 'GET /home/credits': return await showHomeCredits(request, kv, cfg, now);
+      case 'GET /admin/home': return await showHomeAdmin(request, kv, cfg, now, url);
+      case 'POST /admin/home/toggle': return await homeAdminAction(request, env, cfg, now, 'toggle');
+      case 'POST /admin/home/add': return await homeAdminAction(request, env, cfg, now, 'add');
+      case 'POST /admin/home/edit': return await homeAdminAction(request, env, cfg, now, 'edit');
+      case 'POST /admin/home/move': return await homeAdminAction(request, env, cfg, now, 'move');
+      case 'POST /admin/home/delete': return await homeAdminAction(request, env, cfg, now, 'delete');
+      case 'POST /admin/home/clear': return await homeAdminAction(request, env, cfg, now, 'clear');
       default: return notFound();
     }
   } catch (error) {
