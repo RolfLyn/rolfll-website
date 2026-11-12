@@ -1,5 +1,5 @@
-import { escapeHtml, shell, READER_FONTS } from './views';
-import { scoreWord, type HomeGroup, type HomeResults, type Scored } from './home';
+import { escapeHtml, shell, READER_FONTS, adminShell, errorLine, formatStamp } from './views';
+import { scoreWord, homeResults, GROUPS, inGroup, type Home, type HomeGroup, type HomeResults, type HomeScores, type Scored } from './home';
 
 // "Our future home" pages: cream paper like the reading room's letters, one picture at a time, a slider to score.
 
@@ -216,4 +216,94 @@ ${rows}
 
 export function homeErrorPage(): string {
   return page('Our future home', '<div class="wrap"><p class="quiet">Something went wrong loading this page.</p></div>');
+}
+
+const ADMIN_EXTRA = `<style>
+.pics { list-style: none; padding: 0; }
+.pics li { display: flex; gap: 0.8rem; align-items: flex-start; padding: 0.6rem 0; border-bottom: 1px solid #ddd; }
+.pics img { width: 6rem; height: 4.5rem; object-fit: cover; border-radius: 0.4rem; flex: 0 0 auto; }
+.pics .info { flex: 1; min-width: 0; }
+.pics form { display: inline; }
+.dream { display: grid; grid-template-columns: 2fr 1fr; grid-template-rows: 6rem 6rem; gap: 0.4rem; max-width: 24rem; }
+.dream .tile:first-child { grid-row: span 2; }
+.tile { display: block; border-radius: 0.5rem; overflow: hidden; background: #eee; }
+.tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.words span { display: inline-block; background: #f1e6d2; border-radius: 999px; padding: 0.15rem 0.7rem; margin: 0 0.3rem 0.3rem 0; }
+.row { display: flex; align-items: center; gap: 0.6rem; padding: 0.2rem 0; color: inherit; text-decoration: none; }
+.row img { width: 2.75rem; height: 2.1rem; object-fit: cover; border-radius: 0.3rem; }
+.row em { font-style: normal; font-weight: 600; }
+.label { font-weight: 600; margin: 1rem 0 0.3rem; }
+table.scores { border-collapse: collapse; }
+table.scores td, table.scores th { text-align: left; padding: 0.2rem 0.8rem 0.2rem 0; }
+</style>`;
+
+export function homeAdminPage(d: {
+  base: string; csrf: string; home: Home | null; scores: HomeScores | null; flash?: string; error?: string; problem?: string;
+}): string {
+  const csrf = `<input type="hidden" name="csrf" value="${escapeHtml(d.csrf)}">`;
+  const at = (path: string) => escapeHtml(`${d.base}/admin/home${path}`);
+  const mediaBase = `${d.base}/admin/media`;
+  const options = (current?: HomeGroup) => GROUPS.map((g) => `<option value="${g.id}"${g.id === current ? ' selected' : ''}>${g.name}</option>`).join('');
+  const h = d.home;
+  const banner = h
+    ? `<form method="post" action="${at('/toggle')}">${csrf}<input type="hidden" name="on" value="${h.on ? '0' : '1'}"><button type="submit">${h.on ? 'Switch the banner off' : 'Switch the banner on'}</button> <span class="hint">${h.on ? 'The banner is on' : 'The banner is off'}</span></form>`
+    : '';
+  const add = `<h2>Add pictures</h2>
+<form class="write" method="post" enctype="multipart/form-data" action="${at('/add')}">${csrf}
+<label>Group <select name="group">${options()}</select></label>
+<label class="file">Pictures<input type="file" name="photos" accept="image/*" multiple required></label>
+<label>Title <input name="title" maxlength="80" required></label>
+<label>Tags, separated by commas <input name="tags"></label>
+<label>Credit <input name="credit" maxlength="200"></label>
+<p class="hint">Title, tags and credit are used for every picture in this upload.</p>
+<button type="submit">Add</button>
+</form>`;
+  let list = '';
+  if (h) {
+    list = GROUPS.map((g) => {
+      const pics = inGroup(h, g.id);
+      const rows = pics.map((p) => {
+        const s = d.scores && Object.hasOwn(d.scores, p.id) ? d.scores[p.id] : undefined;
+        const id = `<input type="hidden" name="id" value="${escapeHtml(p.id)}">`;
+        return `<li><img src="${escapeHtml(`${mediaBase}/${p.file}`)}" alt="" loading="lazy"><div class="info">
+<strong>${escapeHtml(p.title)}</strong><br><span class="hint">${escapeHtml(p.tags.join(', ') || 'no tags')} · ${escapeHtml(p.credit || 'no credit')}</span><br>${s ? `Her score: ${s.score}` : 'not scored'}
+<details><summary>Edit</summary><form class="write" method="post" action="${at('/edit')}">${csrf}${id}
+<label>Group <select name="group">${options(p.group)}</select></label>
+<label>Title <input name="title" maxlength="80" value="${escapeHtml(p.title)}" required></label>
+<label>Tags <input name="tags" value="${escapeHtml(p.tags.join(', '))}"></label>
+<label>Credit <input name="credit" maxlength="200" value="${escapeHtml(p.credit)}"></label>
+<button type="submit">Save</button></form></details>
+<form method="post" action="${at('/move')}">${csrf}${id}<input type="hidden" name="dir" value="up"><button type="submit" aria-label="Move up">&uarr;</button></form>
+<form method="post" action="${at('/move')}">${csrf}${id}<input type="hidden" name="dir" value="down"><button type="submit" aria-label="Move down">&darr;</button></form>
+<form method="post" action="${at('/delete')}" onsubmit="return confirm('Delete this picture and her score for it?')">${csrf}${id}<button type="submit">Delete</button></form>
+</div></li>`;
+      }).join('\n');
+      return `<h3>${g.name} (${pics.length})</h3>\n<ul class="pics">${rows || '<li>None yet.</li>'}</ul>`;
+    }).join('\n');
+  }
+  let hers = '';
+  if (h && !d.scores) hers = '<p class="error">Her scores could not be read.</p>';
+  else if (h && d.scores) {
+    const scores = d.scores;
+    const scored = h.pictures
+      .filter((p) => Object.hasOwn(scores, p.id))
+      .map((p) => ({ p, s: scores[p.id] }))
+      .sort((a, b) => Date.parse(b.s.at) - Date.parse(a.s.at));
+    const name = (g: HomeGroup) => GROUPS.find((x) => x.id === g)!.name;
+    const table = scored.length
+      ? `<table class="scores"><tr><th>Picture</th><th>Group</th><th>Score</th><th>When</th></tr>
+${scored.map(({ p, s }) => `<tr><td>${escapeHtml(p.title)}</td><td>${name(p.group)}</td><td>${s.score}</td><td>${escapeHtml(formatStamp(s.at))}</td></tr>`).join('\n')}</table>`
+      : '<p>She has not scored anything yet.</p>';
+    hers = `${loveSections(homeResults(h, scores), mediaBase)}\n<h3>Every score</h3>\n${table}
+<form method="post" action="${at('/clear')}" onsubmit="return confirm('Clear all her scores?')">${csrf}<button type="submit">Clear her scores</button></form>`;
+  }
+  return adminShell(`${ADMIN_EXTRA}
+<p><a href="${escapeHtml(`${d.base}/admin`)}">&larr; Notes</a></p>
+<h1>Our future home</h1>
+${d.flash ? `<p class="flash">${escapeHtml(d.flash)}</p>` : ''}
+${errorLine(d.error)}
+${d.problem ? `<p class="error">${escapeHtml(d.problem)}</p>` : ''}
+${banner}
+${add}
+${h ? `<h2>Pictures</h2>\n${list}\n<h2>Her results</h2>\n${hers}` : ''}`);
 }

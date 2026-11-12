@@ -137,3 +137,44 @@ describe('copy and script', () => {
     expect(HOME_SCRIPT).not.toMatch(/=>|\blet |\bconst /);
   });
 });
+
+describe('admin page', async () => {
+  const { homeAdminPage } = await import('../worker/home-views');
+  const h: Home = { on: false, pictures: [pic('a', 'houses', ['wood', 'big windows']), pic('b', 'rooms')] };
+  const base = { base: '/for-you', csrf: 'tok' };
+  it('switches the banner', () => {
+    const off = homeAdminPage({ ...base, home: h, scores: {} });
+    expect(off).toContain('Switch the banner on');
+    expect(off).toContain('The banner is off');
+    expect(off).toContain('name="on" value="1"');
+    const on = homeAdminPage({ ...base, home: { ...h, on: true }, scores: {} });
+    expect(on).toContain('Switch the banner off');
+    expect(on).toContain('name="on" value="0"');
+  });
+  it('lists pictures with tags and her score', () => {
+    const html = homeAdminPage({ ...base, home: h, scores: { a: { score: 8, at: T } } });
+    expect(html).toContain('Picture a');
+    expect(html).toContain('wood, big windows');
+    expect(html).toContain('not scored');
+    expect(html).toContain('Her score: 8');
+    expect(html).toContain('src="/for-you/admin/media/a.jpg"');
+    expect(html).toContain('action="/for-you/admin/home/add"');
+    expect(html).toContain('action="/for-you/admin/home/delete"');
+  });
+  it('lists her scores newest first', () => {
+    const html = homeAdminPage({ ...base, home: h, scores: { a: { score: 8, at: T }, b: { score: 3, at: '2026-11-12T12:00:00.000Z' } } });
+    expect(html.indexOf('<td>Picture b</td>')).toBeGreaterThan(-1);
+    expect(html.indexOf('<td>Picture b</td>')).toBeLessThan(html.indexOf('<td>Picture a</td>'));
+  });
+  it('still opens when the pictures cannot be read', () => {
+    const html = homeAdminPage({ ...base, home: null, scores: {}, problem: 'The saved pictures could not be read.' });
+    expect(html).toContain('The saved pictures could not be read.');
+    expect(html).toContain('action="/for-you/admin/home/add"');
+  });
+  it('says when her scores cannot be read', () => {
+    expect(homeAdminPage({ ...base, home: h, scores: null })).toContain('Her scores could not be read.');
+  });
+  it('uses no em dashes', () => {
+    expect(homeAdminPage({ ...base, home: h, scores: {} })).not.toContain('—');
+  });
+});
