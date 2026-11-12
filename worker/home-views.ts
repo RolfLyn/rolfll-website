@@ -28,6 +28,8 @@ p { font-size: 1.15rem; line-height: 1.4; }
 .num { text-align: center; font-size: 3rem; line-height: 1; color: var(--accent); margin: 0.6rem 0 0; }
 .word { text-align: center; font-style: italic; color: var(--muted); font-size: 1.15rem; margin: 0.1rem 0 0.6rem; min-height: 1.4rem; }
 input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 2.4rem; background: transparent; margin: 0; }
+input[type=range]:focus { outline: none; }
+input[type=range]:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 0.4rem; }
 input[type=range]::-webkit-slider-runnable-track { height: 0.4rem; border-radius: 0.2rem; background: var(--line); }
 input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 1.9rem; height: 1.9rem; margin-top: -0.75rem; border-radius: 50%; background: #fff; border: 2px solid var(--accent); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); }
 input[type=range]::-moz-range-track { height: 0.4rem; border-radius: 0.2rem; background: var(--line); }
