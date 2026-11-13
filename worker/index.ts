@@ -47,7 +47,7 @@ import { giftPage, giftErrorPage, giftAdminPage } from './gift-views';
 import {
   GROUPS, parseHome, parseHomeScores, parseHomeProgress, parsePictureFields, parseScore, saveScore, inGroup, groupCounts,
   firstUnscored, bannerHint, homeResults, addPicture, editPicture, movePicture, removePicture, setOn, HOME_LIMITS,
-  type Home, type HomeGroup, type HomeScores, type HomeProgress,
+  parseHomeRounds, archiveRound, roundName, type HomeRound, type Home, type HomeGroup, type HomeScores, type HomeProgress,
 } from './home';
 import { homeStartPage, homeScorePage, homeDonePage, homeLovePage, homeCreditsPage, homeErrorPage, homeAdminPage } from './home-views';
 import {
@@ -91,6 +91,8 @@ const PLAN_PICKS_SEEN_KEY = 'plan_picks_seen';
 const HOME_KEY = 'home';
 const HOME_SCORES_KEY = 'home_scores';
 const HOME_PROGRESS_KEY = 'home_progress';
+const HOME_ROUNDS_KEY = 'home_rounds';
+const HOME_ROUND_ROUTE = /^\/home\/love\/round-([1-9][0-9]{0,2})$/;
 const HOME_GROUP_ROUTE = /^\/home\/(houses|rooms|gardens|furniture)$/;
 const UUID_PART = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const PLAN_ROUTE = new RegExp(`^(/admin)?/reading-room/plans?/(${UUID_PART})$`);
@@ -100,6 +102,7 @@ const FLASH: Record<string, string> = {
   saved: 'Saved.', deleted: 'Deleted.', 'gift-cleared': 'Her side of the gift is cleared.', booked: 'Marked booked.', unbooked: 'Booking undone. She can pick a day again.', 'meeting-saved': 'Meeting saved.', 'meeting-removed': 'Meeting removed.',
   'home-on': 'The banner is on.', 'home-off': 'The banner is off.', 'home-added': 'Pictures added.', 'home-saved': 'Saved.',
   'home-deleted': 'Picture deleted.', 'home-cleared': 'Her scores are cleared.',
+  'home-round': 'The round is saved. Add the pictures for the new round, then switch the banner on.',
 };
 const EXPIRED = 'That form expired. Go back, reload, and try again.';
 const INVALID = `Needs a real date and a message of at most ${MAX_LENGTH} characters.`;
@@ -353,7 +356,9 @@ async function keysInUse(kv: KV, notes: Note[], entries?: Entry[], books?: Book[
   const album = (await tryLoad(() => loadAlbum(kv), 'album')) ?? [];
   const giftPhotos = (await tryLoad(() => loadGiftPhotos(kv), 'gift photos')) ?? [];
   const home = await tryLoad(() => loadHome(kv), 'home');
+  const rounds = (await tryLoad(() => loadHomeRounds(kv), 'home rounds')) ?? [];
   return [...giftPhotos.map((p) => p.key), ...(home?.pictures.map((p) => p.file) ?? []),
+    ...rounds.flatMap((r) => r.pictures.map((p) => p.file)),
     ...notes.flatMap(attachmentKeys), ...entryKeys(others), ...bookKeys(shelf), ...photos.map((p) => p.key),
     ...songKeys(songs), ...albumKeys(album),
   ];
@@ -858,8 +863,9 @@ async function showMedia(
     return (await serveMedia(env.MEDIA, key, request, 'no-store')) ?? notFound();
   }
   const homeData = await tryLoad(() => loadHome(env.NOTES), 'home');
-  if (homeData?.pictures.some((p) => p.file === key)) {
-    if (!asAdmin && !homeData.on) return notFound();
+  const inRound = (await tryLoad(() => loadHomeRounds(env.NOTES), 'home rounds'))?.some((r) => r.pictures.some((p) => p.file === key));
+  if (homeData?.pictures.some((p) => p.file === key) || inRound) {
+    if (!asAdmin && !homeData?.on) return notFound();
     return (await serveMedia(env.MEDIA, key, request, 'no-store')) ?? notFound();
   }
   const entry = (await tryLoad(() => loadEntries(env.NOTES), 'after dark'))?.find((e) => e.audio?.key === key);
@@ -1664,6 +1670,16 @@ async function loadHome(kv: KV): Promise<Home> {
   return parseHome(await kv.get(HOME_KEY));
 }
 
+async function loadHomeRounds(kv: KV): Promise<HomeRound[]> {
+  return parseHomeRounds(await kv.get(HOME_ROUNDS_KEY));
+}
+
+/** Her earlier rounds and links to them; none if they cannot be read, so the current round still works. */
+async function pastRounds(kv: KV, cfg: Config): Promise<{ rounds: HomeRound[]; links: { name: string; href: string }[] }> {
+  const rounds = (await tryLoad(() => loadHomeRounds(kv), 'home rounds')) ?? [];
+  return { rounds, links: rounds.map((_, i) => ({ name: roundName(i + 1), href: `${cfg.base}/home/love/round-${i + 1}` })) };
+}
+
 interface HomeView { home: Home; scores: HomeScores; progress: HomeProgress }
 
 async function loadHomeView(kv: KV): Promise<HomeView> {
@@ -1678,7 +1694,9 @@ async function homeWayIn(kv: KV, cfg: Config): Promise<{ href: string; title: st
   const view = await tryLoad(() => loadHomeView(kv), 'home');
   if (!view || !view.home.on) return null;
   const hint = bannerHint(view.home, view.scores, view.progress);
-  return hint ? { href: `${cfg.base}/home`, title: 'Our future home', hint: hint.text, waiting: hint.waiting } : null;
+  const { rounds } = await pastRounds(kv, cfg);
+  const title = rounds.length ? `Our future home · ${roundName(rounds.length + 1)}` : 'Our future home';
+  return hint ? { href: `${cfg.base}/home`, title, hint: hint.text, waiting: hint.waiting } : null;
 }
 
 /** Her session and the pictures, or the response to send instead (login, 404 while the banner is off, error page). */
@@ -1710,7 +1728,9 @@ async function showHomeStart(request: Request, kv: KV, cfg: Config, now: Date): 
   if (got instanceof Response) return got;
   const { home, scores } = got.view;
   const counts = groupCounts(home, scores);
+  const past = await pastRounds(kv, cfg);
   return html(homeStartPage({
+    round: past.rounds.length ? roundName(past.rounds.length + 1) : undefined, past: past.links,
     groups: GROUPS.map((g) => ({ ...g, ...counts[g.id], coverKey: inGroup(home, g.id)[0]?.file, href: `${cfg.base}/home/${g.id}` })),
     loveHref: home.pictures.some((p) => Object.hasOwn(scores, p.id)) ? `${cfg.base}/home/love` : undefined,
     mediaBase: `${cfg.base}/media`, back: cfg.base,
@@ -1771,15 +1791,29 @@ async function showHomeLove(request: Request, kv: KV, cfg: Config, now: Date): P
   if (got instanceof Response) return got;
   return html(homeLovePage({
     results: homeResults(got.view.home, got.view.scores), mediaBase: `${cfg.base}/media`,
-    creditsHref: `${cfg.base}/home/credits`, home: `${cfg.base}/home`,
+    creditsHref: `${cfg.base}/home/credits`, home: `${cfg.base}/home`, past: (await pastRounds(kv, cfg)).links,
+  }));
+}
+
+/** An earlier round's results, exactly as they were when it was saved. */
+async function showHomeOldRound(request: Request, kv: KV, cfg: Config, now: Date, n: number): Promise<Response> {
+  const got = await homeForHer(request, kv, cfg, now);
+  if (got instanceof Response) return got;
+  const round = (await pastRounds(kv, cfg)).rounds[n - 1];
+  if (!round) return notFound();
+  return html(homeLovePage({
+    results: homeResults({ on: true, pictures: round.pictures }, round.scores), mediaBase: `${cfg.base}/media`,
+    creditsHref: `${cfg.base}/home/credits`, home: `${cfg.base}/home`, round: roundName(n),
   }));
 }
 
 async function showHomeCredits(request: Request, kv: KV, cfg: Config, now: Date): Promise<Response> {
   const got = await homeForHer(request, kv, cfg, now);
   if (got instanceof Response) return got;
+  const all = [...(await pastRounds(kv, cfg)).rounds.flatMap((r) => r.pictures), ...got.view.home.pictures];
+  const seen = new Set<string>();
   return html(homeCreditsPage({
-    credits: got.view.home.pictures.filter((p) => p.credit).map((p) => ({ title: p.title, credit: p.credit })),
+    credits: all.filter((p) => p.credit && !seen.has(p.file) && seen.add(p.file)).map((p) => ({ title: p.title, credit: p.credit })),
     back: `${cfg.base}/home/love`,
   }));
 }
@@ -1792,8 +1826,9 @@ async function renderHomeAdmin(
   const home = await tryLoad(() => loadHome(kv), 'home');
   const scores = await tryLoad(async () => parseHomeScores(await kv.get(HOME_SCORES_KEY)), 'home scores');
   const progress = await tryLoad(async () => parseHomeProgress(await kv.get(HOME_PROGRESS_KEY)), 'home progress');
+  const rounds = (await tryLoad(() => loadHomeRounds(kv), 'home rounds')) ?? null;
   return html(homeAdminPage({
-    base: cfg.base, csrf: await csrfToken(session, cfg.secret), home, scores, ...view,
+    base: cfg.base, csrf: await csrfToken(session, cfg.secret), home, scores, rounds, ...view,
     problem: !home
       ? 'The saved pictures could not be read. Nothing can be changed here until that is fixed.'
       : !progress ? 'Her progress marker could not be read, so the banner and her pages are hidden from her until it is fixed.' : undefined,
@@ -1808,7 +1843,7 @@ async function showHomeAdmin(request: Request, kv: KV, cfg: Config, now: Date, u
 }
 
 async function homeAdminAction(
-  request: Request, env: Env, cfg: Config, now: Date, action: 'toggle' | 'add' | 'edit' | 'move' | 'delete' | 'clear',
+  request: Request, env: Env, cfg: Config, now: Date, action: 'toggle' | 'add' | 'edit' | 'move' | 'delete' | 'clear' | 'round',
 ): Promise<Response> {
   const back = `${cfg.base}/admin/home`;
   const session = await adminSession(request, cfg, now);
@@ -1828,6 +1863,23 @@ async function homeAdminAction(
   } catch (error) {
     console.error('Could not read home', error);
     return again(HOME_UNREADABLE, 500);
+  }
+  if (action === 'round') {
+    let saved: ReturnType<typeof archiveRound>;
+    try {
+      saved = archiveRound(home, parseHomeScores(await kv.get(HOME_SCORES_KEY)), parseHomeProgress(await kv.get(HOME_PROGRESS_KEY)),
+        await loadHomeRounds(kv));
+    } catch (error) {
+      console.error('Could not read home for a new round', error);
+      return again('Her scores or the earlier rounds could not be read, so nothing was changed.', 500);
+    }
+    if (!saved) return again('There are no pictures to save as a round.');
+    // The round is written first: if anything after fails, nothing of hers is lost.
+    await kv.put(HOME_ROUNDS_KEY, JSON.stringify(saved.rounds));
+    await kv.put(HOME_KEY, JSON.stringify(saved.home));
+    await kv.put(HOME_SCORES_KEY, '{}');
+    await kv.put(HOME_PROGRESS_KEY, '{}');
+    return redirect(`${back}?msg=home-round`);
   }
   const fields = () => parsePictureFields({
     group: field(form, 'group'), title: field(form, 'title'), tags: field(form, 'tags'), credit: field(form, 'credit'),
@@ -1900,6 +1952,8 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
     if (picksPath && method === 'POST') return await handlePlanPicks(request, kv, cfg, now, picksPath[1]);
     const planPath = PLAN_ROUTE.exec(sub);
     if (planPath && method === 'GET' && (sub.includes('/plans/') !== Boolean(planPath[1]))) return await showPlan(request, kv, cfg, now, planPath[2], Boolean(planPath[1]));
+    const homeRound = HOME_ROUND_ROUTE.exec(sub);
+    if (homeRound && method === 'GET') return await showHomeOldRound(request, kv, cfg, now, Number(homeRound[1]));
     const homeGroup = HOME_GROUP_ROUTE.exec(sub);
     if (homeGroup && method === 'GET') return await showHomeGroup(request, kv, cfg, now, url, homeGroup[1] as HomeGroup);
     const media = MEDIA_ROUTE.exec(sub);
@@ -1975,6 +2029,7 @@ export async function handleRequest(request: Request, env: Env, now: Date): Prom
       case 'POST /admin/home/move': return await homeAdminAction(request, env, cfg, now, 'move');
       case 'POST /admin/home/delete': return await homeAdminAction(request, env, cfg, now, 'delete');
       case 'POST /admin/home/clear': return await homeAdminAction(request, env, cfg, now, 'clear');
+      case 'POST /admin/home/round': return await homeAdminAction(request, env, cfg, now, 'round');
       default: return notFound();
     }
   } catch (error) {

@@ -15,6 +15,8 @@ export interface HomePicture { id: string; group: HomeGroup; title: string; tags
 export interface Home { on: boolean; pictures: HomePicture[] }
 export type HomeScores = Record<string, { score: number; at: string }>;
 export interface HomeProgress { finishedAt?: string }
+/** A finished round, kept as it was: its pictures and her scores for them. Never changed after it is saved. */
+export interface HomeRound { finishedAt?: string; pictures: HomePicture[]; scores: HomeScores }
 export interface Scored extends HomePicture { score: number; at: string }
 export interface HomeResults {
   ready: boolean;
@@ -55,8 +57,10 @@ export function parseHome(raw: string | null): Home {
 }
 
 export function parseHomeScores(raw: string | null): HomeScores {
-  if (raw === null) return {};
-  const data: unknown = JSON.parse(raw);
+  return raw === null ? {} : checkScores(JSON.parse(raw));
+}
+
+function checkScores(data: unknown): HomeScores {
   if (!isRecord(data)) throw new Error('Stored home scores are invalid');
   const out: HomeScores = {};
   for (const [id, v] of Object.entries(data)) {
@@ -64,6 +68,36 @@ export function parseHomeScores(raw: string | null): HomeScores {
     out[id] = { score: v.score, at: v.at };
   }
   return out;
+}
+
+export function parseHomeRounds(raw: string | null): HomeRound[] {
+  if (raw === null) return [];
+  const data: unknown = JSON.parse(raw);
+  if (!Array.isArray(data)) throw new Error('Stored home rounds are invalid');
+  return data.map((r: unknown) => {
+    if (!isRecord(r) || !Array.isArray(r.pictures) || !r.pictures.every(isPicture) || (r.finishedAt !== undefined && !isTime(r.finishedAt))) {
+      throw new Error('Stored home rounds are invalid');
+    }
+    const round: HomeRound = { pictures: parseHome(JSON.stringify({ on: false, pictures: r.pictures })).pictures, scores: checkScores(r.scores) };
+    return r.finishedAt === undefined ? round : { finishedAt: r.finishedAt, ...round };
+  });
+}
+
+const NUMBERS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+export const roundName = (n: number) => `Round ${NUMBERS[n - 1] ?? n}`;
+
+/** Saves the current pictures and her scores for them as a finished round, and empties the list with the banner off.
+ *  Null when there is nothing to save. */
+export function archiveRound(home: Home, scores: HomeScores, progress: HomeProgress, rounds: HomeRound[]):
+  { rounds: HomeRound[]; home: Home } | null {
+  if (home.pictures.length === 0) return null;
+  const kept: HomeScores = {};
+  for (const p of home.pictures) if (Object.hasOwn(scores, p.id)) kept[p.id] = scores[p.id];
+  const round: HomeRound = { pictures: home.pictures, scores: kept };
+  return {
+    rounds: [...rounds, progress.finishedAt ? { finishedAt: progress.finishedAt, ...round } : round],
+    home: { on: false, pictures: [] },
+  };
 }
 
 export function parseHomeProgress(raw: string | null): HomeProgress {

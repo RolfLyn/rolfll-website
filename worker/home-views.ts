@@ -1,5 +1,5 @@
 import { escapeHtml, shell, READER_FONTS, adminShell, errorLine, formatStamp } from './views';
-import { scoreWord, homeResults, GROUPS, inGroup, type Home, type HomeGroup, type HomeResults, type HomeScores, type Scored } from './home';
+import { scoreWord, homeResults, roundName, GROUPS, inGroup, type Home, type HomeGroup, type HomeResults, type HomeRound, type HomeScores, type Scored } from './home';
 
 // "Our future home" pages: cream paper like the reading room's letters, one picture at a time, a slider to score.
 
@@ -54,6 +54,8 @@ input[type=range]::-moz-range-thumb { width: 1.9rem; height: 1.9rem; border-radi
 .credits { font-size: 1rem; color: var(--muted); }
 .foot { margin-top: 2rem; font-size: 0.95rem; }
 .foot a { color: var(--muted); }
+.past { margin-top: 1.6rem; }
+.past a { display: block; color: var(--ink); margin: 0.3rem 0; }
 .zoom { position: fixed; inset: 0; z-index: 10; background: rgba(20, 15, 12, 0.94); display: flex; align-items: center; justify-content: center; }
 .zoom img { max-width: 100%; max-height: 100%; object-fit: contain; }
 @media (prefers-reduced-motion: no-preference) {
@@ -120,19 +122,29 @@ export const HOME_SCRIPT = `(function () {
   }
 })();`;
 
+export interface PastRound { name: string; href: string }
+
+function pastLinks(past: PastRound[] = []): string {
+  return past.length
+    ? `<div class="past">${past.map((r) => `<a href="${escapeHtml(r.href)}">${escapeHtml(`${r.name}: your dream home`)}</a>`).join('')}</div>`
+    : '';
+}
+
 export function homeStartPage(d: {
   groups: { id: HomeGroup; name: string; scored: number; total: number; coverKey?: string; href: string }[];
-  loveHref?: string; mediaBase: string; back: string;
+  loveHref?: string; mediaBase: string; back: string; round?: string; past?: PastRound[];
 }): string {
   const cards = d.groups.map((g) => `<a class="card" href="${escapeHtml(g.href)}">${g.coverKey ? `<img class="cover" src="${media(d.mediaBase, g.coverKey)}" alt="">` : '<span class="cover"></span>'}<span class="name">${escapeHtml(g.name)}</span><span class="count">${g.scored} of ${g.total}</span></a>`).join('\n');
   return page('Our future home', `<div class="wrap">
 <a class="back" href="${escapeHtml(d.back)}">&larr; Back</a>
 <h1>Our future home</h1>
+${d.round ? `<p class="sub">${escapeHtml(`${d.round}. These were chosen from what you loved last time.`)}</p>` : ''}
 <p class="sub">Slide to say how much you love each one. There are no wrong answers.</p>
 <div class="cards">
 ${cards}
 </div>
 ${d.loveHref ? `<p><a class="pill" href="${escapeHtml(d.loveHref)}">See what you love</a></p>` : ''}
+${pastLinks(d.past)}
 </div>`);
 }
 
@@ -198,12 +210,15 @@ ${results.words.length ? `<p class="label">${escapeHtml("What you're drawn to")}
   return `${top}\n${lists}`;
 }
 
-export function homeLovePage(d: { results: HomeResults; mediaBase: string; creditsHref: string; home: string }): string {
-  return page('Your dream home', `<div class="wrap">
+export function homeLovePage(d: {
+  results: HomeResults; mediaBase: string; creditsHref: string; home: string; round?: string; past?: PastRound[];
+}): string {
+  return page(d.round ? `${d.round}: your dream home` : 'Your dream home', `<div class="wrap">
 <a class="back" href="${escapeHtml(d.home)}">&larr; Our future home</a>
 <h1>Your dream home</h1>
-<p class="sub">Put together from everything you loved</p>
+<p class="sub">${escapeHtml(d.round ? `${d.round}, put together from everything you loved` : 'Put together from everything you loved')}</p>
 ${loveSections(d.results, d.mediaBase)}
+${pastLinks(d.past)}
 <p class="foot"><a href="${escapeHtml(d.creditsHref)}">Photo credits</a></p>
 </div>`);
 }
@@ -243,7 +258,8 @@ table.scores td, table.scores th { text-align: left; padding: 0.2rem 0.8rem 0.2r
 </style>`;
 
 export function homeAdminPage(d: {
-  base: string; csrf: string; home: Home | null; scores: HomeScores | null; flash?: string; error?: string; problem?: string;
+  base: string; csrf: string; home: Home | null; scores: HomeScores | null; rounds?: HomeRound[] | null;
+  flash?: string; error?: string; problem?: string;
 }): string {
   const csrf = `<input type="hidden" name="csrf" value="${escapeHtml(d.csrf)}">`;
   const at = (path: string) => escapeHtml(`${d.base}/admin/home${path}`);
@@ -302,6 +318,18 @@ ${scored.map(({ p, s }) => `<tr><td>${escapeHtml(p.title)}</td><td>${name(p.grou
     hers = `${loveSections(homeResults(h, scores), mediaBase)}\n<h3>Every score</h3>\n${table}
 <form method="post" action="${at('/clear')}" onsubmit="return confirm('Clear all her scores?')">${csrf}<button type="submit">Clear her scores</button></form>`;
   }
+  const rounds = d.rounds ?? [];
+  const next = roundName(rounds.length + 2).toLowerCase();
+  const start = h && h.pictures.length
+    ? `<h2>A new round</h2>
+<p class="hint">${escapeHtml(`Saves these pictures and her scores as ${roundName(rounds.length + 1).toLowerCase()}, which she can still look back at. Then the list is emptied and the banner is switched off, ready for the ${next} pictures.`)}</p>
+<form method="post" action="${at('/round')}" onsubmit="return confirm('Save this round and start a new one?')">${csrf}<button type="submit">Start a new round</button></form>`
+    : '';
+  const past = d.rounds === null
+    ? '<p class="error">The earlier rounds could not be read.</p>'
+    : rounds.map((r, i) => `<h2>${roundName(i + 1)}</h2>
+<p class="hint">${escapeHtml(`${r.pictures.length} pictures${r.finishedAt ? `, finished ${formatStamp(r.finishedAt)}` : ''}`)}</p>
+${loveSections(homeResults({ on: true, pictures: r.pictures }, r.scores), mediaBase)}`).reverse().join('\n');
   return adminShell(`${ADMIN_EXTRA}
 <p><a href="${escapeHtml(`${d.base}/admin`)}">&larr; Notes</a></p>
 <h1>Our future home</h1>
@@ -310,5 +338,7 @@ ${errorLine(d.error)}
 ${d.problem ? `<p class="error">${escapeHtml(d.problem)}</p>` : ''}
 ${banner}
 ${add}
-${h ? `<h2>Pictures</h2>\n${list}\n<h2>Her results</h2>\n${hers}` : ''}`);
+${h ? `<h2>Pictures</h2>\n${list}\n<h2>Her results</h2>\n${hers}` : ''}
+${start}
+${past}`);
 }
