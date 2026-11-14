@@ -1,4 +1,5 @@
 import { todayInCopenhagen } from './dates';
+import { formatEmphasis } from './html';
 import {
   escapeHtml, formatDate, listeningShell, adminShell, errorLine, replyArea, replyLine,
   REPLY_STYLE, REPLY_SCRIPT, type ReplyForm,
@@ -71,7 +72,7 @@ export function roomPage({ entries, replies, mediaBase, leave, reply, unsent, pr
   const form = preview ? undefined : reply;
   const items = entries.map((e) => `<article class="entry">
 ${e.title ? `<h2>${escapeHtml(e.title)}</h2>\n` : ''}<p class="date">${entryDate(e)}</p>
-<p class="text">${escapeHtml(e.text)}</p>
+<p class="text">${formatEmphasis(e.text)}</p>
 ${e.audio ? `<audio controls preload="none" src="${escapeHtml(`${mediaBase}/${e.audio.key}`)}"></audio>\n` : ''}${replies ? replyArea({ field: 'id', value: e.id, anchor: `entry-${e.id}` }, replies.find((r) => r.id === e.id), form, unsent === e.id) : ''}
 </article>`).join('\n');
   const leaveButton = leave && !preview
@@ -114,7 +115,7 @@ export function afterDarkAdminPage(d: AfterDarkAdminData): string {
     </span>
   </div>
   ${e.title ? `<p class="text"><strong>${escapeHtml(e.title)}</strong></p>` : ''}
-  <p class="text">${escapeHtml(e.text)}</p>
+  <p class="text">${formatEmphasis(e.text)}</p>
   ${replyLine(d.replies.find((r) => r.id === e.id))}
 </li>`).join('\n');
   const sound = d.editing?.audio
@@ -134,6 +135,7 @@ ${errorLine(d.error)}
   <textarea name="text" maxlength="${ENTRY_LIMITS.text}" required placeholder="Entry">${escapeHtml(d.draft.text)}</textarea>
   <label class="file">Sound (optional)<input type="file" name="audio" accept="audio/*,.m4a"></label>
   ${sound}
+  <p class="hint">Write **like this** for bold and *like this* for italic.</p>
   <p class="hint">Sound: M4A, MP3, AAC or WAV, up to 25 MB.</p>
   <button type="submit">Save</button>
 </form>
