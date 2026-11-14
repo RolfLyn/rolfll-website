@@ -1,7 +1,7 @@
 import { GAME_LIMITS, type Note } from './notes';
 import { EMPTY_DRAFT, type GameDraft } from './game';
 import { GAME_SCRIPT, GAME_STYLE } from './game-script';
-import { escapeHtml } from './html';
+import { escapeHtml, formatEmphasis } from './html';
 import { skyMarkup, SKY_STYLE } from './sky';
 import { EMPTY_MEETING, MEETING_PLACE_MAX, type Meeting, type MeetingDraft, type Sky } from './meetings';
 import type { Answer, Reply } from './replies';
@@ -336,7 +336,7 @@ function gameData(note: Note, preview: boolean): string {
 // The note's text as paragraphs, with each drawing in place of its marker.
 function noteText(text: string, cls: string): string {
   return splitNote(text)
-    .map((piece) => (piece.kind === 'text' ? `<p class="${cls}">${escapeHtml(piece.text)}</p>` : equationFigure(piece.name)))
+    .map((piece) => (piece.kind === 'text' ? `<p class="${cls}">${formatEmphasis(piece.text)}</p>` : equationFigure(piece.name)))
     .join('\n');
 }
 
@@ -501,7 +501,7 @@ export function adminPage(d: AdminPageData): string {
     </span>
   </div>
   ${n.photo ? `<img class="thumb" src="${escapeHtml(`${mediaBase}/${n.photo.key}`)}" alt="" loading="lazy">` : ''}
-  <p class="text">${escapeHtml(n.text)}</p>
+  <p class="text">${formatEmphasis(n.text)}</p>
   ${replyLine(d.replies?.find((r) => r.date === n.date))}
 </li>`).join('\n');
 
@@ -518,7 +518,7 @@ export function adminPage(d: AdminPageData): string {
 ${d.flash ? `<p class="flash">${escapeHtml(d.flash)}</p>` : ''}
 ${errorLine(d.error)}
 <h2>Showing today (${formatDate(d.today)})</h2>
-<div class="box">${d.current ? escapeHtml(d.current.text) : 'Nothing yet.'}</div>
+<div class="box">${d.current ? formatEmphasis(d.current.text) : 'Nothing yet.'}</div>
 ${meetingsSection(d.base, csrf, d.meetings ?? [], d.meetingDraft ?? EMPTY_MEETING)}
 <h2>Write a note</h2>
 <form class="write" method="post" enctype="multipart/form-data" action="${escapeHtml(`${d.base}/admin/save`)}">
@@ -526,6 +526,7 @@ ${meetingsSection(d.base, csrf, d.meetings ?? [], d.meetingDraft ?? EMPTY_MEETIN
   ${d.original ? `<input type="hidden" name="original" value="${escapeHtml(d.original)}">` : ''}
   <input type="date" name="date" value="${escapeHtml(d.form.date)}" required>
   <textarea name="text" maxlength="5000" required placeholder="Today's note">${escapeHtml(d.form.text)}</textarea>
+  <p class="hint">Write **like this** for bold and *like this* for italic.</p>
   <p class="hint">Drawings: put [[heart]], [[filling heart]], [[butterfly]] or [[fourier heart]] on a line of its own.</p>
   <label class="file">Photo (optional)<input type="file" name="photo" accept="image/*"></label>
   ${currentPhoto}

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { formatEmphasis } from '../worker/html';
 import { roomPage, afterDarkAdminPage } from '../worker/after-dark-views';
 import type { Entry } from '../worker/after-dark';
+import { readerPage, adminPage } from '../worker/views';
 
 describe('formatEmphasis', () => {
   it('turns **text** into bold', () => {
@@ -38,5 +39,20 @@ describe('after dark shows emphasis', () => {
   it('in the admin list', () => {
     const html = afterDarkAdminPage({ base: '/a', csrf: 't', entries: [entry], replies: [], draft: { title: '', text: '' } });
     expect(html).toContain('<p class="text">you are <strong>so</strong> <em>loved</em></p>');
+  });
+});
+
+describe('daily notes show emphasis', () => {
+  const note = { date: '2026-11-14', text: '**Bold.** and *soft*\n\nnext line' };
+  it('on her page and in preview', () => {
+    for (const preview of [false, true]) {
+      const html = readerPage({ current: note, archive: [], mediaBase: '/m', preview } as Parameters<typeof readerPage>[0]);
+      expect(html).toContain('<strong>Bold.</strong> and <em>soft</em>');
+      expect(html).not.toContain('**');
+    }
+  });
+  it('in admin, both today and the list', () => {
+    const html = adminPage({ base: '/a', today: '2026-11-14', current: note, csrf: 't', notes: [note], form: { date: '2026-11-14', text: '' } } as Parameters<typeof adminPage>[0]);
+    expect(html.match(/<strong>Bold\.<\/strong> and <em>soft<\/em>/g)?.length).toBe(2);
   });
 });
